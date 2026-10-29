@@ -47,6 +47,12 @@ class MainActivity : AppCompatActivity() {
             mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             setSupportMultipleWindows(true)
             javaScriptCanOpenWindowsAutomatically = true
+            
+            // Эти 4 строки включают мобильную верстку
+            useWideViewPort = true
+            loadWithOverviewMode = true
+            builtInZoomControls = false
+            displayZoomControls = false
         }
 
         webView.webViewClient = WebViewClient()
@@ -69,6 +75,12 @@ class MainActivity : AppCompatActivity() {
                     javaScriptEnabled = true
                     domStorageEnabled = true
                     mediaPlaybackRequiresUserGesture = false
+                    
+                    // И для окна заявки тоже включаем мобильную верстку
+                    useWideViewPort = true
+                    loadWithOverviewMode = true
+                    builtInZoomControls = false
+                    displayZoomControls = false
                 }
 
                 newWebView.webViewClient = object : WebViewClient() {
