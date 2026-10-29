@@ -31,6 +31,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var audioManager: AudioManager
     private var orderDialog: Dialog? = null
+    private var pendingCallAction: String? = null
 
     companion object {
         var instance: MainActivity? = null
@@ -122,7 +123,7 @@ class MainActivity : AppCompatActivity() {
                 hangupButton.setTextColor(Color.WHITE)
                 hangupButton.setOnClickListener {
                     webView.evaluateJavascript(
-                        "(function(){try{if(window.jssipSession&&typeof window.jssipSession.terminate==='function'){window.jssipSession.terminate();}}catch(e){}})();",
+                        "(function(){if(window.phoneComponent){window.phoneComponent.hangup();}})();",
                         null
                     )
                     dialog.dismiss()
@@ -150,24 +151,37 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.loadUrl("https://profi-lead-crm.ru/admin")
+
+        // Обрабатываем действие из уведомления, если приложение было убито
+        handleIntentAction(intent)
     }
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        when (intent?.action) {
+        handleIntentAction(intent)
+    }
+
+    private fun handleIntentAction(intent: Intent?) {
+        val action = intent?.action ?: return
+        when (action) {
             "ACCEPT_CALL" -> {
-                webView.evaluateJavascript(
-                    "(function(){try{if(window.jssipSession&&typeof window.jssipSession.answer==='function'){window.jssipSession.answer({mediaConstraints:{audio:true,video:false}});}}catch(e){}})();",
-                    null
-                )
-                cancelCallNotification()
+                // Ждём загрузки WebView (компонент телефона должен инициализироваться)
+                webView.postDelayed({
+                    webView.evaluateJavascript(
+                        "(function(){if(window.phoneComponent){window.phoneComponent.answer();}})();",
+                        null
+                    )
+                    cancelCallNotification()
+                }, 500)
             }
             "DECLINE_CALL" -> {
-                webView.evaluateJavascript(
-                    "(function(){try{if(window.jssipSession&&typeof window.jssipSession.terminate==='function'){window.jssipSession.terminate();}}catch(e){}})();",
-                    null
-                )
-                cancelCallNotification()
+                webView.postDelayed({
+                    webView.evaluateJavascript(
+                        "(function(){if(window.phoneComponent){window.phoneComponent.hangup();}})();",
+                        null
+                    )
+                    cancelCallNotification()
+                }, 500)
             }
         }
     }
