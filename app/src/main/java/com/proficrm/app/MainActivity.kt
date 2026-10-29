@@ -3,6 +3,8 @@ package com.proficrm.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Dialog
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -21,6 +23,7 @@ import android.widget.Button
 import android.widget.LinearLayout
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
+import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
@@ -29,9 +32,14 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioManager: AudioManager
     private var orderDialog: Dialog? = null
 
+    companion object {
+        var instance: MainActivity? = null
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        instance = this
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
@@ -59,7 +67,6 @@ class MainActivity : AppCompatActivity() {
             displayZoomControls = false
         }
 
-        // Мост для вызова нативных функций из JavaScript
         webView.addJavascriptInterface(WebAppInterface(this), "AndroidBridge")
 
         webView.webViewClient = WebViewClient()
@@ -140,6 +147,27 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://profi-lead-crm.ru/admin")
     }
 
+    override fun onNewIntent(intent: Intent?) {
+        super.onNewIntent(intent)
+        // Обработка нажатия на кнопки в уведомлении о звонке
+        when (intent?.action) {
+            "ACCEPT_CALL" -> {
+                webView.evaluateJavascript(
+                    "(function(){try{if(window.jssipSession&&typeof window.jssipSession.answer==='function'){window.jssipSession.answer({mediaConstraints:{audio:true,video:false}});}}catch(e){}})();",
+                    null
+                )
+                cancelCallNotification()
+            }
+            "DECLINE_CALL" -> {
+                webView.evaluateJavascript(
+                    "(function(){try{if(window.jssipSession&&typeof window.jssipSession.terminate==='function'){window.jssipSession.terminate();}}catch(e){}})();",
+                    null
+                )
+                cancelCallNotification()
+            }
+        }
+    }
+
     inner class WebAppInterface(private val context: Context) {
 
         @JavascriptInterface
@@ -176,24 +204,45 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun showIncomingCallNotification(number: String, name: String) {
             try {
-                val intent = Intent(this@MainActivity, MainActivity::class.java)
-                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                val pendingIntent = android.app.PendingIntent.getActivity(
-                    this@MainActivity, 0, intent,
-                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                val acceptIntent = Intent(this@MainActivity, MainActivity::class.java).apply {
+                    action = "ACCEPT_CALL"
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                val acceptPending = PendingIntent.getActivity(
+                    this@MainActivity, 1, acceptIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
                 )
 
-                val notification = androidx.core.app.NotificationCompat.Builder(this@MainActivity, "ProfiCrmChannel")
+                val declineIntent = Intent(this@MainActivity, MainActivity::class.java).apply {
+                    action = "DECLINE_CALL"
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                val declinePending = PendingIntent.getActivity(
+                    this@MainActivity, 2, declineIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val fullScreenIntent = Intent(this@MainActivity, MainActivity::class.java).apply {
+                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                }
+                val fullScreenPending = PendingIntent.getActivity(
+                    this@MainActivity, 3, fullScreenIntent,
+                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val notification = NotificationCompat.Builder(this@MainActivity, "ProfiCrmChannel")
                     .setContentTitle("Входящий звонок")
                     .setContentText("$name ($number)")
                     .setSmallIcon(android.R.drawable.ic_menu_call)
-                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
-                    .setFullScreenIntent(pendingIntent, true)
+                    .setPriority(NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(NotificationCompat.CATEGORY_CALL)
+                    .setFullScreenIntent(fullScreenPending, true)
                     .setAutoCancel(true)
+                    .addAction(android.R.drawable.ic_menu_call, "Принять", acceptPending)
+                    .addAction(android.R.drawable.ic_delete, "Сбросить", declinePending)
                     .build()
 
-                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 manager.notify(1001, notification)
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -202,12 +251,16 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun cancelIncomingCallNotification() {
-            try {
-                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-                manager.cancel(1001)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            cancelCallNotification()
+        }
+    }
+
+    private fun cancelCallNotification() {
+        try {
+            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            manager.cancel(1001)
+        } catch (e: Exception) {
+            e.printStackTrace()
         }
     }
 
@@ -245,6 +298,7 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
+        instance = null
         orderDialog?.dismiss()
         webView.destroy()
     }
