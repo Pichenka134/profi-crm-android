@@ -18,13 +18,17 @@ jobs:
           java-version: '17'
           distribution: 'temurin'
 
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+
       - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
+        uses: gradle/actions/setup-gradle@v3
+        with:
+          gradle-version: 8.6 # Указываем Gradle 8.6, совместимый с AGP 8.4.0
 
       - name: Build with Gradle
         run: gradle assembleDebug --stacktrace
-        # Добавляем флаг --stacktrace, чтобы увидеть подробную ошибку в логе
-      
+
       - name: Upload APK
         uses: actions/upload-artifact@v4
         with:
