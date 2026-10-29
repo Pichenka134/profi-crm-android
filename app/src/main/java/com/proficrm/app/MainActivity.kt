@@ -41,6 +41,11 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         instance = this
 
+        // Включаем отладку WebView для chrome://inspect
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
+            WebView.setWebContentsDebuggingEnabled(true)
+        }
+
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
         if (hasAudioPermission()) {
@@ -149,7 +154,6 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
-        // Обработка нажатия на кнопки в уведомлении о звонке
         when (intent?.action) {
             "ACCEPT_CALL" -> {
                 webView.evaluateJavascript(
@@ -239,7 +243,7 @@ class MainActivity : AppCompatActivity() {
                     .setFullScreenIntent(fullScreenPending, true)
                     .setAutoCancel(true)
                     .addAction(android.R.drawable.ic_menu_call, "Принять", acceptPending)
-                    .addAction(android.R.drawable.ic_delete, "Сбросить", declinePending)
+                    .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Сбросить", declinePending)
                     .build()
 
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
