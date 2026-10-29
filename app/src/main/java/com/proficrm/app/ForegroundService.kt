@@ -33,9 +33,11 @@ class ForegroundService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val serviceChannel = NotificationChannel(
                 CHANNEL_ID,
-                "Profi CRM Service",
-                NotificationManager.IMPORTANCE_LOW
+                "Profi CRM",
+                NotificationManager.IMPORTANCE_HIGH
             )
+            serviceChannel.enableVibration(true)
+            serviceChannel.enableLights(true)
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(serviceChannel)
         }
