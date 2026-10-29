@@ -15,8 +15,12 @@ class ForegroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        createNotificationChannel()
-        startForeground(1, buildNotification())
+        try {
+            createNotificationChannel()
+            startForeground(1, buildNotification())
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
