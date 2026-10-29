@@ -3,13 +3,16 @@ package com.proficrm.app
 import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Dialog
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Message
 import android.view.ViewGroup
+import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
 import android.webkit.WebView
@@ -23,11 +26,14 @@ import androidx.core.content.ContextCompat
 class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
+    private lateinit var audioManager: AudioManager
     private var orderDialog: Dialog? = null
 
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
         if (hasAudioPermission()) {
             startMyService()
@@ -47,13 +53,14 @@ class MainActivity : AppCompatActivity() {
             mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
             setSupportMultipleWindows(true)
             javaScriptCanOpenWindowsAutomatically = true
-            
-            // Эти 4 строки включают мобильную верстку
             useWideViewPort = true
             loadWithOverviewMode = true
             builtInZoomControls = false
             displayZoomControls = false
         }
+
+        // Мост для вызова нативных функций из JavaScript
+        webView.addJavascriptInterface(WebAppInterface(this), "AndroidBridge")
 
         webView.webViewClient = WebViewClient()
 
@@ -75,12 +82,8 @@ class MainActivity : AppCompatActivity() {
                     javaScriptEnabled = true
                     domStorageEnabled = true
                     mediaPlaybackRequiresUserGesture = false
-                    
-                    // И для окна заявки тоже включаем мобильную верстку
                     useWideViewPort = true
                     loadWithOverviewMode = true
-                    builtInZoomControls = false
-                    displayZoomControls = false
                 }
 
                 newWebView.webViewClient = object : WebViewClient() {
@@ -112,34 +115,18 @@ class MainActivity : AppCompatActivity() {
                     )
                     dialog.dismiss()
                 }
-                headerLayout.addView(
-                    hangupButton,
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                )
+                headerLayout.addView(hangupButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
                 val closeButton = Button(this@MainActivity)
                 closeButton.text = "✕ Закрыть форму"
                 closeButton.setOnClickListener { dialog.dismiss() }
-                headerLayout.addView(
-                    closeButton,
-                    LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
-                )
+                headerLayout.addView(closeButton, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
 
                 layout.addView(headerLayout)
-                layout.addView(
-                    newWebView,
-                    LinearLayout.LayoutParams(
-                        LinearLayout.LayoutParams.MATCH_PARENT,
-                        0,
-                        1f
-                    )
-                )
+                layout.addView(newWebView, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
 
                 dialog.setContentView(layout)
-                dialog.window?.setLayout(
-                    ViewGroup.LayoutParams.MATCH_PARENT,
-                    ViewGroup.LayoutParams.MATCH_PARENT
-                )
+                dialog.window?.setLayout(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
                 dialog.setOnDismissListener { orderDialog = null }
                 dialog.show()
 
@@ -151,6 +138,77 @@ class MainActivity : AppCompatActivity() {
         }
 
         webView.loadUrl("https://profi-lead-crm.ru/admin")
+    }
+
+    inner class WebAppInterface(private val context: Context) {
+
+        @JavascriptInterface
+        fun setSpeakerphoneOn(enabled: Boolean) {
+            try {
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                audioManager.isSpeakerphoneOn = enabled
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        @JavascriptInterface
+        fun setAudioMode(mode: String) {
+            try {
+                audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
+                audioManager.isSpeakerphoneOn = (mode == "speaker")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        @JavascriptInterface
+        fun setAudioVolume(volumePercent: Int) {
+            try {
+                val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                val target = (max * volumePercent / 100).coerceIn(0, max)
+                audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, target, 0)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        @JavascriptInterface
+        fun showIncomingCallNotification(number: String, name: String) {
+            try {
+                val intent = Intent(this@MainActivity, MainActivity::class.java)
+                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
+                val pendingIntent = android.app.PendingIntent.getActivity(
+                    this@MainActivity, 0, intent,
+                    android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_IMMUTABLE
+                )
+
+                val notification = androidx.core.app.NotificationCompat.Builder(this@MainActivity, "ProfiCrmChannel")
+                    .setContentTitle("Входящий звонок")
+                    .setContentText("$name ($number)")
+                    .setSmallIcon(android.R.drawable.ic_menu_call)
+                    .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
+                    .setCategory(androidx.core.app.NotificationCompat.CATEGORY_CALL)
+                    .setFullScreenIntent(pendingIntent, true)
+                    .setAutoCancel(true)
+                    .build()
+
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                manager.notify(1001, notification)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        @JavascriptInterface
+        fun cancelIncomingCallNotification() {
+            try {
+                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
+                manager.cancel(1001)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
     }
 
     private fun hasAudioPermission(): Boolean {
@@ -167,10 +225,8 @@ class MainActivity : AppCompatActivity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode == 101) {
-            if (hasAudioPermission()) {
-                startMyService()
-            }
+        if (requestCode == 101 && hasAudioPermission()) {
+            startMyService()
         }
     }
 
