@@ -74,13 +74,16 @@ class LinphoneService : Service() {
             
             // 2. Настраиваем сервер и транспорт через Address
             val serverAddress = Factory.instance().createAddress("sip:$server")
-            serverAddress?.transport = TransportType.Tcp // Устанавливаем TCP через Address
+            serverAddress?.transport = TransportType.Tcp // Транспорт задаётся у адреса сервера
             proxyConfig.serverAddr = serverAddress?.asStringUriOnly()
             
-            // 3. Включаем регистрацию
-            proxyConfig.enableRegister(true)
+            // 3. Включаем регистрацию (исправлено: registerEnabled вместо enableRegister)
+            proxyConfig.registerEnabled = true
             
-            // 4. Добавляем в Core
+            // 4. Финализируем настройки
+            proxyConfig.done()
+            
+            // 5. Добавляем в Core
             c.addAuthInfo(authInfo)
             c.addProxyConfig(proxyConfig)
             c.defaultProxyConfig = proxyConfig
