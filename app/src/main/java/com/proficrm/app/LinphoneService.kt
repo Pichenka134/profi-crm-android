@@ -123,7 +123,7 @@ class LinphoneService : Service() {
                 params.identityAddress = identityAddress
                 params.serverAddress = serverAddress
                 params.isRegisterEnabled = true
-                params.isPushNotificationAllowed = true
+                // Убрали строку с isPushNotificationAllowed
 
                 val account = core?.createAccount(params)
                 if (account != null) {
