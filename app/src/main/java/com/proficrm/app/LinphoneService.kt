@@ -77,8 +77,8 @@ class LinphoneService : Service() {
             serverAddress?.transport = TransportType.Tcp // Транспорт задаётся у адреса сервера
             proxyConfig.serverAddr = serverAddress?.asStringUriOnly()
             
-            // 3. Включаем регистрацию (исправлено: registerEnabled вместо enableRegister)
-            proxyConfig.registerEnabled = true
+            // 3. Включаем регистрацию (исправлено: enableRegister вместо registerEnabled)
+            proxyConfig.enableRegister(true)
             
             // 4. Финализируем настройки
             proxyConfig.done()
