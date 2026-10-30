@@ -14,6 +14,7 @@ import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
 import android.os.Message
+import android.os.PowerManager
 import android.view.ViewGroup
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -32,7 +33,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var audioManager: AudioManager
     private var orderDialog: Dialog? = null
-    private var pendingCallAction: String? = null
+    private var proximityWakeLock: PowerManager.WakeLock? = null
 
     companion object {
         var instance: MainActivity? = null
@@ -49,6 +50,13 @@ class MainActivity : AppCompatActivity() {
         }
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+        // Инициализация WakeLock для датчика приближения
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        proximityWakeLock = powerManager.newWakeLock(
+            PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+            "ProfiCrm::ProximitySensor"
+        )
 
         if (hasAudioPermission()) {
             startMyService()
@@ -153,7 +161,6 @@ class MainActivity : AppCompatActivity() {
 
         webView.loadUrl("https://profi-lead-crm.ru/admin")
 
-        // Обрабатываем действие из уведомления, если приложение было убито
         handleIntentAction(intent)
     }
 
@@ -191,10 +198,8 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun setSpeakerphoneOn(enabled: Boolean) {
             try {
-                // 1. Принудительно переводим аудио в режим разговора
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
 
-                // 2. Для Android 12+ (API 31+) используем новый метод
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val devices = audioManager.availableCommunicationDevices
                     val targetType = if (enabled) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
@@ -203,12 +208,10 @@ class MainActivity : AppCompatActivity() {
                         audioManager.setCommunicationDevice(targetDevice)
                     }
                 } else {
-                    // Для старых версий Android
                     @Suppress("DEPRECATION")
                     audioManager.isSpeakerphoneOn = enabled
                 }
 
-                // 3. На всякий случай выкручиваем громкость на максимум
                 val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
                 audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVolume, 0)
 
@@ -245,6 +248,30 @@ class MainActivity : AppCompatActivity() {
                 val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
                 val target = (max * volumePercent / 100).coerceIn(0, max)
                 audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, target, 0)
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        @JavascriptInterface
+        fun enableProximitySensor() {
+            try {
+                if (proximityWakeLock?.isHeld == false) {
+                    proximityWakeLock?.acquire(60 * 60 * 1000L)
+                    println("📡 Датчик приближения ВКЛЮЧЕН")
+                }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
+        }
+
+        @JavascriptInterface
+        fun disableProximitySensor() {
+            try {
+                if (proximityWakeLock?.isHeld == true) {
+                    proximityWakeLock?.release()
+                    println("📡 Датчик приближения ВЫКЛЮЧЕН")
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -349,6 +376,7 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         instance = null
         orderDialog?.dismiss()
+        proximityWakeLock?.release()
         webView.destroy()
     }
 }
