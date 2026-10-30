@@ -1,4 +1,4 @@
-package com.proficrm.app
+package com.proficrm.app // Оставь свой пакет, если он другой
 
 import android.app.*
 import android.content.Context
@@ -43,7 +43,11 @@ class LinphoneService : Service() {
         val server = intent?.getStringExtra("sip_server") ?: "sipproxy.telphin.ru"
 
         if (login != null && password != null && core == null) {
-            initLinphone(login, password, server)
+            try {
+                initLinphone(login, password, server)
+            } catch (e: Throwable) {
+                Log.e("LinphoneService", "Критическая ошибка инициализации Linphone: ${e.message}")
+            }
         }
 
         return START_STICKY
@@ -63,19 +67,13 @@ class LinphoneService : Service() {
             c.isIpv6Enabled = false
             
             val authInfo = factory.createAuthInfo(login, null, password, null, null, server)
-            
             val params = c.createAccountParams()
+            params.identityAddress = factory.createAddress("sip:$login@$server")
             
-            val identity = factory.createAddress("sip:$login@$server")
-            params.identityAddress = identity
-            
-            // ИСПРАВЛЕНО: используем безопасный вызов (?.) для nullable Address
             val serverAddress = factory.createAddress("sip:$server")?.apply {
                 transport = TransportType.Tcp
             }
             params.serverAddress = serverAddress
-            
-            // ИСПРАВЛЕНО: правильное имя свойства — isRegisterEnabled
             params.isRegisterEnabled = true
             
             val account = c.createAccount(params)
@@ -91,20 +89,17 @@ class LinphoneService : Service() {
                     }
                 }
             })
-
             c.start()
         }
     }
 
     private fun showIncomingCallNotification(call: Call) {
         val remoteAddress = call.remoteAddress?.username ?: "Неизвестный"
-        
         val fullScreenIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
             putExtra("incoming_call", true)
             putExtra("caller_number", remoteAddress)
         }
-        
         val pendingIntent = PendingIntent.getActivity(
             this, 0, fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
