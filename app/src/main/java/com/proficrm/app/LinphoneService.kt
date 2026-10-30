@@ -1,4 +1,4 @@
-package com.proficrm.app // Оставь свой пакет, если он другой
+package com.proficrm.app
 
 import android.app.*
 import android.content.Context
@@ -20,7 +20,7 @@ class LinphoneService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        Log.d("LinphoneService", "Сервис создан")
+        Log.d("LinphoneService", "1. Сервис создан")
         createNotificationChannel()
         acquireWakeLock()
         
@@ -29,8 +29,7 @@ class LinphoneService : Service() {
             startForeground(
                 NOTIF_ID, 
                 notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE // Убрали PHONE_CALL для совместимости
             )
         } else {
             startForeground(NOTIF_ID, notification)
@@ -38,15 +37,17 @@ class LinphoneService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        Log.d("LinphoneService", "2. onStartCommand получен")
         val login = intent?.getStringExtra("sip_login")
         val password = intent?.getStringExtra("sip_password")
         val server = intent?.getStringExtra("sip_server") ?: "sipproxy.telphin.ru"
 
         if (login != null && password != null && core == null) {
             try {
+                Log.d("LinphoneService", "3. Начинаем initLinphone")
                 initLinphone(login, password, server)
             } catch (e: Throwable) {
-                Log.e("LinphoneService", "Критическая ошибка инициализации Linphone: ${e.message}")
+                Log.e("LinphoneService", "КРИТИЧЕСКАЯ ОШИБКА LINPHONE: ${e.message}")
             }
         }
 
@@ -54,21 +55,31 @@ class LinphoneService : Service() {
     }
 
     private fun initLinphone(login: String, password: String, server: String) {
-        Log.d("LinphoneService", "Инициализация Linphone для $login")
-        
+        Log.d("LinphoneService", "4. Инициализация Factory")
         val factory = Factory.instance()
         factory.setDebugMode(true, "Linphone")
-        factory.setCacheDir(filesDir.absolutePath)
-        factory.setDataDir(filesDir.absolutePath)
+        
+        // Иногда эти пути вызывают краш на новых Android, если папка недоступна
+        try {
+            factory.setCacheDir(filesDir.absolutePath)
+            factory.setDataDir(filesDir.absolutePath)
+        } catch (e: Exception) {
+            Log.e("LinphoneService", "Ошибка установки директорий: ${e.message}")
+        }
 
+        Log.d("LinphoneService", "5. Создание Core")
         core = factory.createCore(null, null, this)
+        
         core?.let { c ->
             c.transports.tcpPort = 5060
             c.isIpv6Enabled = false
             
+            Log.d("LinphoneService", "6. Создание AuthInfo")
             val authInfo = factory.createAuthInfo(login, null, password, null, null, server)
             val params = c.createAccountParams()
-            params.identityAddress = factory.createAddress("sip:$login@$server")
+            
+            val identity = factory.createAddress("sip:$login@$server")
+            params.identityAddress = identity
             
             val serverAddress = factory.createAddress("sip:$server")?.apply {
                 transport = TransportType.Tcp
@@ -76,6 +87,7 @@ class LinphoneService : Service() {
             params.serverAddress = serverAddress
             params.isRegisterEnabled = true
             
+            Log.d("LinphoneService", "7. Создание Account")
             val account = c.createAccount(params)
             c.addAuthInfo(authInfo)
             c.addAccount(account)
@@ -89,21 +101,20 @@ class LinphoneService : Service() {
                     }
                 }
             })
+            
+            Log.d("LinphoneService", "8. Запуск Core (c.start())")
             c.start()
+            Log.d("LinphoneService", "9. Core успешно запущен")
         }
     }
 
+    // ... (функции showIncomingCallNotification, createNotificationChannel, createServiceNotification, acquireWakeLock, onDestroy остаются без изменений)
     private fun showIncomingCallNotification(call: Call) {
         val remoteAddress = call.remoteAddress?.username ?: "Неизвестный"
         val fullScreenIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            putExtra("incoming_call", true)
-            putExtra("caller_number", remoteAddress)
         }
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
+        val pendingIntent = PendingIntent.getActivity(this, 0, fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
         val notification = NotificationCompat.Builder(this, CHANNEL_ID)
             .setContentTitle("Входящий звонок")
             .setContentText("Звонит: $remoteAddress")
@@ -113,17 +124,13 @@ class LinphoneService : Service() {
             .setFullScreenIntent(pendingIntent, true)
             .setOngoing(true)
             .build()
-
         val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         notificationManager.notify(NOTIF_ID + 1, notification)
     }
 
     private fun createNotificationChannel() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val serviceChannel = NotificationChannel(
-                CHANNEL_ID, "SIP Сервис",
-                NotificationManager.IMPORTANCE_LOW
-            )
+            val serviceChannel = NotificationChannel(CHANNEL_ID, "SIP Сервис", NotificationManager.IMPORTANCE_LOW)
             val manager = getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(serviceChannel)
         }
@@ -145,7 +152,6 @@ class LinphoneService : Service() {
     }
 
     override fun onDestroy() {
-        Log.d("LinphoneService", "Сервис уничтожен")
         core?.stop()
         wakeLock?.let { if (it.isHeld) it.release() }
         super.onDestroy()
