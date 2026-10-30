@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
 import android.os.Bundle
@@ -165,7 +166,6 @@ class MainActivity : AppCompatActivity() {
         val action = intent?.action ?: return
         when (action) {
             "ACCEPT_CALL" -> {
-                // Ждём загрузки WebView (компонент телефона должен инициализироваться)
                 webView.postDelayed({
                     webView.evaluateJavascript(
                         "(function(){if(window.phoneComponent){window.phoneComponent.answer();}})();",
@@ -191,8 +191,28 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun setSpeakerphoneOn(enabled: Boolean) {
             try {
+                // 1. Принудительно переводим аудио в режим разговора
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-                audioManager.isSpeakerphoneOn = enabled
+
+                // 2. Для Android 12+ (API 31+) используем новый метод
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val devices = audioManager.availableCommunicationDevices
+                    val targetType = if (enabled) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                    val targetDevice = devices.firstOrNull { it.type == targetType }
+                    if (targetDevice != null) {
+                        audioManager.setCommunicationDevice(targetDevice)
+                    }
+                } else {
+                    // Для старых версий Android
+                    @Suppress("DEPRECATION")
+                    audioManager.isSpeakerphoneOn = enabled
+                }
+
+                // 3. На всякий случай выкручиваем громкость на максимум
+                val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
+                audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVolume, 0)
+
+                println("🔊 Громкая связь: $enabled")
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -202,7 +222,18 @@ class MainActivity : AppCompatActivity() {
         fun setAudioMode(mode: String) {
             try {
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-                audioManager.isSpeakerphoneOn = (mode == "speaker")
+                val enableSpeaker = (mode == "speaker")
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                    val devices = audioManager.availableCommunicationDevices
+                    val targetType = if (enableSpeaker) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
+                    val targetDevice = devices.firstOrNull { it.type == targetType }
+                    if (targetDevice != null) {
+                        audioManager.setCommunicationDevice(targetDevice)
+                    }
+                } else {
+                    @Suppress("DEPRECATION")
+                    audioManager.isSpeakerphoneOn = enableSpeaker
+                }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
