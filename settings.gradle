@@ -12,7 +12,13 @@ dependencyResolutionManagement {
         google()
         mavenCentral()
         maven {
-            url = uri("https://download.linphone.org/maven_repository")
+            // Официальный репозиторий Linphone (обязательно со слэшем на конце!)
+            url = uri("https://download.linphone.org/maven_repository/")
+            content {
+                includeGroup("org.linphone")
+                includeGroup("org.linphone.bundled")
+                includeGroup("org.linphone.no-video")
+            }
         }
     }
 }
