@@ -1,8 +1,9 @@
-package com.example.proficrm
+package com.proficrm.app // ОСТАВЬ СВОЮ СТРОКУ PACKAGE, ЕСЛИ ОНА ДРУГАЯ
 
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
@@ -23,27 +24,31 @@ class LinphoneService : Service() {
         Log.d("LinphoneService", "Сервис создан")
         createNotificationChannel()
         acquireWakeLock()
-    }
-
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        // ВАЖНО: Выводим сервис в foreground, иначе Android 12+ его убьет
-        val notification = createNotification("SIP-телефон активен", "Ожидание звонков...")
         
+        // ВАЖНО: Выводим сервис в foreground, иначе Android 12+ его убьет
+        val notification = createServiceNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+            startForeground(
+                NOTIF_ID, 
+                notification,
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or
+                ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE
+            )
         } else {
             startForeground(NOTIF_ID, notification)
         }
+    }
 
-        val login = intent?.getStringExtra("login")
-        val password = intent?.getStringExtra("password")
-        val server = intent?.getStringExtra("server") ?: "sipproxy.telphin.ru"
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val login = intent?.getStringExtra("sip_login")
+        val password = intent?.getStringExtra("sip_password")
+        val server = intent?.getStringExtra("sip_server") ?: "sipproxy.telphin.ru"
 
         if (login != null && password != null && core == null) {
             initLinphone(login, password, server)
         }
 
-        return START_STICKY // Если система убьет, она попытается перезапустить
+        return START_STICKY // Если система убьет, она перезапустит сервис
     }
 
     private fun initLinphone(login: String, password: String, server: String) {
@@ -70,7 +75,6 @@ class LinphoneService : Service() {
             c.addProxyConfig(params)
             c.defaultProxyConfig = params
             
-            // Добавляем авторизацию
             c.addAuthInfo(authInfo)
 
             // Слушаем звонки
@@ -125,10 +129,10 @@ class LinphoneService : Service() {
         }
     }
 
-    private fun createNotification(title: String, text: String): Notification {
+    private fun createServiceNotification(): Notification {
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle(title)
-            .setContentText(text)
+            .setContentTitle("SIP-телефон активен")
+            .setContentText("Ожидание звонков...")
             .setSmallIcon(android.R.drawable.stat_sys_phone_call)
             .setPriority(NotificationCompat.PRIORITY_LOW)
             .build()
@@ -137,7 +141,7 @@ class LinphoneService : Service() {
     private fun acquireWakeLock() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ProfiCrm::SipWakeLock")
-        wakeLock?.acquire(10 * 60 * 1000L) // 10 минут, потом обновится
+        wakeLock?.acquire(10 * 60 * 1000L) // 10 минут
     }
 
     override fun onDestroy() {
