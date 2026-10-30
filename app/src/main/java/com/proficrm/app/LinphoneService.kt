@@ -50,7 +50,6 @@ class LinphoneService : Service() {
             return START_STICKY
         }
 
-        // Если учётные данные изменились — перезапускаем Linphone
         if (login != currentLogin || password != currentPassword || server != currentServer) {
             Log.d(TAG, "Учётные данные изменились, перезапуск Linphone")
             stopLinphone()
