@@ -1,4 +1,4 @@
-package com.proficrm.app // Оставь свой пакет, если он другой
+package com.proficrm.app // Оставь свой пакет
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -16,6 +16,7 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import java.io.File
 
 class MainActivity : AppCompatActivity() {
 
@@ -25,23 +26,31 @@ class MainActivity : AppCompatActivity() {
     @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+
+        // --- ПЕРЕХВАТЧИК ОШИБОК ---
+        val crashFile = File(filesDir, "crash_log.txt")
         
-        // Создаем корневой Layout программно, чтобы не зависеть от XML
+        Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
+            try {
+                crashFile.writeText(throwable.stackTraceToString())
+            } catch (e: Exception) {}
+            android.os.Process.killProcess(android.os.Process.myPid())
+        }
+        // --------------------------
+
         val layout = android.widget.FrameLayout(this)
         layout.setBackgroundColor(Color.WHITE)
         
-        // Добавляем WebView
         webView = WebView(this)
         layout.addView(webView, android.widget.FrameLayout.LayoutParams(
             android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
             android.widget.FrameLayout.LayoutParams.MATCH_PARENT
         ))
 
-        // Добавляем текстовое поле для вывода ошибок поверх WebView
         errorText = TextView(this)
         errorText.setTextColor(Color.RED)
-        errorText.setBackgroundColor(Color.WHITE)
-        errorText.textSize = 16f
+        errorText.setBackgroundColor(Color.YELLOW) // Желтый фон, чтобы сразу заметить
+        errorText.textSize = 14f
         errorText.visibility = TextView.GONE
         layout.addView(errorText, android.widget.FrameLayout.LayoutParams(
             android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
@@ -50,6 +59,12 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(layout)
 
+        // Если в прошлый раз было падение, показываем лог
+        if (crashFile.exists()) {
+            errorText.text = "КРАШ:\n" + crashFile.readText().take(1000)
+            errorText.visibility = TextView.VISIBLE
+        }
+
         requestAppPermissions()
         requestIgnoreBatteryOptimizationsSafely()
 
@@ -57,7 +72,6 @@ class MainActivity : AppCompatActivity() {
         webView.settings.domStorageEnabled = true
         webView.settings.databaseEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
-        
         WebView.setWebContentsDebuggingEnabled(true)
 
         webView.webChromeClient = object : WebChromeClient() {
@@ -67,32 +81,17 @@ class MainActivity : AppCompatActivity() {
         }
         
         webView.webViewClient = object : WebViewClient() {
-            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                super.onReceivedError(view, request, error)
-                showError("Ошибка сети: ${error?.description} (Код: ${error?.errorCode})")
-            }
-
-            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: android.net.http.SslError?) {
-                handler?.proceed()
-                showError("Предупреждение SSL: ${error?.primaryError}")
-            }
-
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                errorText.visibility = TextView.GONE
+                // Очищаем красный текст, если сайт загрузился успешно
+                if (errorText.text.startsWith("Ошибка сети")) {
+                   errorText.visibility = TextView.GONE
+                }
             }
         }
         
         webView.addJavascriptInterface(WebAppInterface(), "AndroidBridge")
         webView.loadUrl("https://profi-lead-crm.ru/admin/orders")
-    }
-
-    private fun showError(message: String) {
-        runOnUiThread {
-            errorText.text = message
-            errorText.visibility = TextView.VISIBLE
-            Log.e("WebViewError", message)
-        }
     }
 
     private fun requestAppPermissions() {
@@ -123,38 +122,35 @@ class MainActivity : AppCompatActivity() {
                     }
                     startActivity(intent)
                 }
-            } catch (e: Exception) {
-                Log.e("MainActivity", "Не удалось запросить оптимизацию", e)
-            }
+            } catch (e: Exception) {}
         }
     }
 
     inner class WebAppInterface {
-        // Защита от null (если у юзера нет SIP-логина)
         @JavascriptInterface
         fun startNativeSip(login: String?, password: String?, server: String?) {
-            if (login.isNullOrEmpty() || password.isNullOrEmpty() || login == "null") {
-                Log.e("MainActivity", "SIP-логин или пароль пустые. Нативный сервис не запускаем.")
-                return
-            }
+            if (login.isNullOrEmpty() || password.isNullOrEmpty() || login == "null") return
             
-            Log.d("MainActivity", "Запуск нативного SIP для $login")
-            val intent = Intent(this@MainActivity, LinphoneService::class.java).apply {
-                putExtra("sip_login", login)
-                putExtra("sip_password", password)
-                putExtra("sip_server", server ?: "sipproxy.telphin.ru")
-            }
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent)
-            } else {
-                startService(intent)
+            try {
+                val intent = Intent(this@MainActivity, LinphoneService::class.java).apply {
+                    putExtra("sip_login", login)
+                    putExtra("sip_password", password)
+                    putExtra("sip_server", server ?: "sipproxy.telphin.ru")
+                }
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(intent)
+                } else {
+                    startService(intent)
+                }
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Ошибка запуска сервиса", e)
             }
         }
 
         @JavascriptInterface
-        fun setSpeakerphoneOn(on: Boolean) { Log.d("MainActivity", "Динамик: $on") }
+        fun setSpeakerphoneOn(on: Boolean) {}
         @JavascriptInterface
-        fun setAudioMode(mode: String) { Log.d("MainActivity", "Аудио режим: $mode") }
+        fun setAudioMode(mode: String) {}
         @JavascriptInterface
         fun showIncomingCallNotification(number: String, name: String) {}
     }
