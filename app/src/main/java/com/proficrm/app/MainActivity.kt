@@ -1,4 +1,4 @@
-package com.proficrm.app // ОСТАВЬ СВОЮ СТРОКУ PACKAGE, ЕСЛИ ОНА ДРУГАЯ
+package com.proficrm.app // Если у тебя другой пакет, оставь свою первую строку
 
 import android.Manifest
 import android.annotation.SuppressLint
