@@ -1,4 +1,4 @@
-package com.proficrm.app // Если у тебя другой пакет, оставь свою первую строку
+package com.proficrm.app // Оставь свой пакет
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -28,19 +28,14 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.activity_main)
 
-        // 1. Запрашиваем разрешения
         requestAppPermissions()
+        requestIgnoreBatteryOptimizationsSafely()
 
-        // 2. Отключаем оптимизацию батареи (чтобы сервис не убивало)
-        requestIgnoreBatteryOptimizations()
-
-        // 3. Настраиваем WebView
         webView = findViewById(R.id.webView)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
         webView.settings.mediaPlaybackRequiresUserGesture = false
         
-        // ВАЖНО: Разрешаем WebView использовать микрофон
         webView.webChromeClient = object : WebChromeClient() {
             override fun onPermissionRequest(request: PermissionRequest?) {
                 request?.grant(request.resources)
@@ -48,8 +43,6 @@ class MainActivity : AppCompatActivity() {
         }
         
         webView.webViewClient = WebViewClient()
-        
-        // Подключаем мост для вызова из JS
         webView.addJavascriptInterface(WebAppInterface(), "AndroidBridge")
         
         webView.loadUrl("https://profi-lead-crm.ru/admin/orders")
@@ -72,22 +65,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun requestIgnoreBatteryOptimizations() {
+    private fun requestIgnoreBatteryOptimizationsSafely() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val pm = getSystemService(POWER_SERVICE) as PowerManager
-            if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                val intent = Intent().apply {
-                    action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
-                    data = Uri.parse("package:$packageName")
+            try {
+                val pm = getSystemService(POWER_SERVICE) as PowerManager
+                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                    val intent = Intent().apply {
+                        action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                        data = Uri.parse("package:$packageName")
+                    }
+                    startActivity(intent)
                 }
-                startActivity(intent)
+            } catch (e: Exception) {
+                Log.e("MainActivity", "Не удалось запросить отключение оптимизации батареи", e)
             }
         }
     }
 
-    // --- МОСТ МЕЖДУ WEBVIEW И ANDROID ---
     inner class WebAppInterface {
-        
         @JavascriptInterface
         fun startNativeSip(login: String, password: String, server: String) {
             Log.d("MainActivity", "Запуск нативного SIP для $login")
@@ -96,7 +91,6 @@ class MainActivity : AppCompatActivity() {
                 putExtra("sip_password", password)
                 putExtra("sip_server", server)
             }
-            // КРИТИЧЕСКИ ВАЖНО: Для Android 8+ используем startForegroundService
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(intent)
             } else {
@@ -115,8 +109,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
-        fun showIncomingCallNotification(number: String, name: String) {
-            // Обрабатывается в LinphoneService
-        }
+        fun showIncomingCallNotification(number: String, name: String) {}
     }
 }
