@@ -1,4 +1,4 @@
-package com.proficrm.app // ОСТАВЬ СВОЮ СТРОКУ PACKAGE, ЕСЛИ ОНА ДРУГАЯ
+package com.proficrm.app // Если у тебя другой пакет, оставь свою первую строку
 
 import android.app.*
 import android.content.Context
@@ -25,7 +25,6 @@ class LinphoneService : Service() {
         createNotificationChannel()
         acquireWakeLock()
         
-        // ВАЖНО: Выводим сервис в foreground, иначе Android 12+ его убьет
         val notification = createServiceNotification()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
             startForeground(
@@ -48,7 +47,7 @@ class LinphoneService : Service() {
             initLinphone(login, password, server)
         }
 
-        return START_STICKY // Если система убьет, она перезапустит сервис
+        return START_STICKY
     }
 
     private fun initLinphone(login: String, password: String, server: String) {
@@ -56,28 +55,30 @@ class LinphoneService : Service() {
         
         val factory = Factory.instance()
         factory.setDebugMode(true, "Linphone")
-        factory.setStoragePath(filesDir.absolutePath)
+        
+        // ИСПРАВЛЕНО: setStoragePath больше не используется в новых SDK
+        factory.setCacheDir(filesDir.absolutePath)
+        factory.setDataDir(filesDir.absolutePath)
 
         core = factory.createCore(null, null, this)
         core?.let { c ->
-            // Включаем TCP для стабильности в фоне (UDP часто блокируется)
             c.transports.tcpPort = 5060
             c.isIpv6Enabled = false
             
-            // Настройка аккаунта
             val authInfo = Factory.instance().createAuthInfo(login, null, password, null, null, server)
             val params = c.createProxyConfig()
             params.identityAddress = Factory.instance().createAddress("sip:$login@$server")
             params.serverAddr = "sip:$server"
-            params.transport = TransportType.Tcp // ВАЖНО для фона!
-            params.isRegisterEnabled = true
-            params.register()
+            
+            // ИСПРАВЛЕНО: Правильная установка типа транспорта и регистрации
+            params.transport = TransportType.Tcp 
+            params.enableRegister(true)
+            params.done()
+            
             c.addProxyConfig(params)
             c.defaultProxyConfig = params
-            
             c.addAuthInfo(authInfo)
 
-            // Слушаем звонки
             c.addListener(object : CoreListenerStub() {
                 override fun onCallStateChanged(core: Core, call: Call, state: Call.State?, message: String) {
                     Log.d("LinphoneService", "Состояние звонка: $state")
@@ -110,7 +111,7 @@ class LinphoneService : Service() {
             .setSmallIcon(android.R.drawable.sym_action_call)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(pendingIntent, true) // Разбуживает экран
+            .setFullScreenIntent(pendingIntent, true)
             .setOngoing(true)
             .build()
 
@@ -141,7 +142,7 @@ class LinphoneService : Service() {
     private fun acquireWakeLock() {
         val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
         wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ProfiCrm::SipWakeLock")
-        wakeLock?.acquire(10 * 60 * 1000L) // 10 минут
+        wakeLock?.acquire(10 * 60 * 1000L)
     }
 
     override fun onDestroy() {
