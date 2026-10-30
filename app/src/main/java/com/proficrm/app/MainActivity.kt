@@ -11,10 +11,12 @@ import android.content.pm.PackageManager
 import android.graphics.Color
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Message
 import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import android.view.ViewGroup
 import android.webkit.ConsoleMessage
@@ -24,7 +26,9 @@ import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
+import android.widget.EditText
 import android.widget.LinearLayout
+import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
@@ -60,6 +64,8 @@ class MainActivity : AppCompatActivity() {
 
         if (hasAudioPermission()) {
             startAllServices()
+            requestBatteryOptimization()
+            requestFullScreenIntentPermission()
         } else {
             requestPermissions()
         }
@@ -169,6 +175,42 @@ class MainActivity : AppCompatActivity() {
         handleIntentAction(intent)
     }
 
+    /**
+     * Запрос на игнорирование оптимизации батареи
+     */
+    private fun requestBatteryOptimization() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            try {
+                val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+                if (!powerManager.isIgnoringBatteryOptimizations(packageName)) {
+                    val intent = Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                    intent.data = Uri.parse("package:$packageName")
+                    startActivity(intent)
+                }
+            } catch (e: Exception) {
+                Log.e("ProfiCrm", "Ошибка запроса оптимизации батареи", e)
+            }
+        }
+    }
+
+    /**
+     * Запрос на полноэкранные уведомления (Android 14+)
+     */
+    private fun requestFullScreenIntentPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+            try {
+                val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                if (!notificationManager.canUseFullScreenIntent()) {
+                    val intent = Intent(Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT)
+                    intent.data = Uri.parse("package:$packageName")
+                    startActivity(intent)
+                }
+            } catch (e: Exception) {
+                Log.e("ProfiCrm", "Ошибка запроса полноэкранных уведомлений", e)
+            }
+        }
+    }
+
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
         handleIntentAction(intent)
@@ -194,6 +236,15 @@ class MainActivity : AppCompatActivity() {
                     )
                     cancelCallNotification()
                 }, 500)
+            }
+            "SHOW_INCOMING_CALL" -> {
+                // Просто открываем приложение (оно уже на экране)
+            }
+            "SHOW_MISSED_CALLS" -> {
+                // Переходим на страницу журнала звонков
+                webView.postDelayed({
+                    webView.loadUrl("https://profi-lead-crm.ru/admin/calls")
+                }, 300)
             }
         }
     }
@@ -234,6 +285,48 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Нативный диалог набора номера
+     */
+    private fun showDialerDialog() {
+        val dialog = Dialog(this)
+        val layout = LinearLayout(this)
+        layout.orientation = LinearLayout.VERTICAL
+        layout.setPadding(40, 40, 40, 40)
+
+        val input = EditText(this)
+        input.hint = "+7 900 000-00-00"
+        input.setText("+7")
+        layout.addView(input)
+
+        val callButton = Button(this)
+        callButton.text = "📞 Позвонить"
+        callButton.setBackgroundColor(Color.parseColor("#22c55e"))
+        callButton.setTextColor(Color.WHITE)
+        callButton.setOnClickListener {
+            val number = input.text.toString().trim()
+            if (number.isNotEmpty()) {
+                webView.evaluateJavascript(
+                    "(function(){if(window.phoneComponent){window.phoneComponent.makeCall('$number');}})();",
+                    null
+                )
+                dialog.dismiss()
+            } else {
+                Toast.makeText(this, "Введите номер", Toast.LENGTH_SHORT).show()
+            }
+        }
+        layout.addView(callButton)
+
+        val cancelButton = Button(this)
+        cancelButton.text = "Отмена"
+        cancelButton.setOnClickListener { dialog.dismiss() }
+        layout.addView(cancelButton)
+
+        dialog.setContentView(layout)
+        dialog.setTitle("Набор номера")
+        dialog.show()
+    }
+
     inner class WebAppInterface(private val context: Context) {
 
         @JavascriptInterface
@@ -251,6 +344,11 @@ class MainActivity : AppCompatActivity() {
         }
 
         @JavascriptInterface
+        fun showDialer() {
+            runOnUiThread { showDialerDialog() }
+        }
+
+        @JavascriptInterface
         fun setSpeakerphoneOn(enabled: Boolean) {
             try {
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
@@ -265,7 +363,6 @@ class MainActivity : AppCompatActivity() {
                 }
                 val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
                 audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVolume, 0)
-                Log.d("ProfiCrm", "🔊 Громкая связь: $enabled")
             } catch (e: Exception) {
                 e.printStackTrace()
             }
@@ -306,7 +403,6 @@ class MainActivity : AppCompatActivity() {
             try {
                 if (proximityWakeLock?.isHeld == false) {
                     proximityWakeLock?.acquire(60 * 60 * 1000L)
-                    Log.d("ProfiCrm", "📡 Датчик приближения ВКЛЮЧЕН")
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -318,71 +414,17 @@ class MainActivity : AppCompatActivity() {
             try {
                 if (proximityWakeLock?.isHeld == true) {
                     proximityWakeLock?.release()
-                    Log.d("ProfiCrm", "📡 Датчик приближения ВЫКЛЮЧЕН")
                 }
             } catch (e: Exception) {
                 e.printStackTrace()
             }
-        }
-
-        @JavascriptInterface
-        fun showIncomingCallNotification(number: String, name: String) {
-            try {
-                val acceptIntent = Intent(this@MainActivity, MainActivity::class.java).apply {
-                    action = "ACCEPT_CALL"
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                }
-                val acceptPending = PendingIntent.getActivity(
-                    this@MainActivity, 1, acceptIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-
-                val declineIntent = Intent(this@MainActivity, MainActivity::class.java).apply {
-                    action = "DECLINE_CALL"
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                }
-                val declinePending = PendingIntent.getActivity(
-                    this@MainActivity, 2, declineIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-
-                val fullScreenIntent = Intent(this@MainActivity, MainActivity::class.java).apply {
-                    flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-                }
-                val fullScreenPending = PendingIntent.getActivity(
-                    this@MainActivity, 3, fullScreenIntent,
-                    PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-                )
-
-                val notification = NotificationCompat.Builder(this@MainActivity, "ProfiCrmChannel")
-                    .setContentTitle("Входящий звонок")
-                    .setContentText("$name ($number)")
-                    .setSmallIcon(android.R.drawable.ic_menu_call)
-                    .setPriority(NotificationCompat.PRIORITY_HIGH)
-                    .setCategory(NotificationCompat.CATEGORY_CALL)
-                    .setFullScreenIntent(fullScreenPending, true)
-                    .setAutoCancel(true)
-                    .addAction(android.R.drawable.ic_menu_call, "Принять", acceptPending)
-                    .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Сбросить", declinePending)
-                    .build()
-
-                val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-                manager.notify(1001, notification)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
-        }
-
-        @JavascriptInterface
-        fun cancelIncomingCallNotification() {
-            cancelCallNotification()
         }
     }
 
     private fun cancelCallNotification() {
         try {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.cancel(1001)
+            manager.cancel(1002)
         } catch (e: Exception) {
             e.printStackTrace()
         }
@@ -404,6 +446,8 @@ class MainActivity : AppCompatActivity() {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 101 && hasAudioPermission()) {
             startAllServices()
+            requestBatteryOptimization()
+            requestFullScreenIntentPermission()
         }
     }
 
