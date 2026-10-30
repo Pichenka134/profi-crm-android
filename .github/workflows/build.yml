@@ -24,13 +24,6 @@ jobs:
           packages: 'platform-tools'
           ndk-version: 25.2.9519653
 
-      - name: Download Linphone AAR
-        run: |
-          mkdir -p app/libs
-          curl -L -o app/libs/linphone-sdk-android-5.4.0.aar \
-            https://download.linphone.org/maven_repository/org/linphone/bundled/linphone-sdk-android/5.4.0/linphone-sdk-android-5.4.0.aar
-          ls -lh app/libs/
-
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
