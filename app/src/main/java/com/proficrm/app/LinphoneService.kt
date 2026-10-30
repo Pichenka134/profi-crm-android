@@ -7,8 +7,10 @@ import android.app.PendingIntent
 import android.app.Service
 import android.content.Context
 import android.content.Intent
+import android.net.wifi.WifiManager
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.linphone.core.AuthInfo
@@ -26,6 +28,8 @@ class LinphoneService : Service() {
     private val TAG = "LinphoneService"
     private var core: Core? = null
     private var coreListener: CoreListenerStub? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+    private var wifiLock: WifiManager.WifiLock? = null
 
     private var currentLogin: String? = null
     private var currentPassword: String? = null
@@ -36,6 +40,29 @@ class LinphoneService : Service() {
         Log.d(TAG, "Сервис создан")
         createNotificationChannel()
         startForeground(2, buildNotification())
+        acquireLocks()
+    }
+
+    private fun acquireLocks() {
+        try {
+            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+            wakeLock = powerManager.newWakeLock(
+                PowerManager.PARTIAL_WAKE_LOCK,
+                "ProfiCrm::LinphoneWakeLock"
+            )
+            wakeLock?.acquire()
+
+            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
+            wifiLock = wifiManager.createWifiLock(
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
+                "ProfiCrm::LinphoneWifiLock"
+            )
+            wifiLock?.acquire()
+
+            Log.d(TAG, "WakeLock и WifiLock для LinphoneService получены")
+        } catch (e: Exception) {
+            Log.e(TAG, "Ошибка при получении блокировок", e)
+        }
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -43,15 +70,11 @@ class LinphoneService : Service() {
         val password = intent?.getStringExtra("sip_password")
         val server = intent?.getStringExtra("sip_server") ?: "sipproxy.telphin.ru"
 
-        Log.d(TAG, "Получены SIP-данные: login=$login, server=$server")
-
         if (login.isNullOrEmpty() || password.isNullOrEmpty()) {
-            Log.w(TAG, "⚠️ SIP-данные не переданы, Linphone не запускается")
             return START_STICKY
         }
 
         if (login != currentLogin || password != currentPassword || server != currentServer) {
-            Log.d(TAG, "Учётные данные изменились, перезапуск Linphone")
             stopLinphone()
             initLinphone(login, password, server)
             currentLogin = login
@@ -123,7 +146,6 @@ class LinphoneService : Service() {
                 params.identityAddress = identityAddress
                 params.serverAddress = serverAddress
                 params.isRegisterEnabled = true
-                // Убрали строку с isPushNotificationAllowed
 
                 val account = core?.createAccount(params)
                 if (account != null) {
@@ -183,6 +205,8 @@ class LinphoneService : Service() {
     override fun onDestroy() {
         super.onDestroy()
         stopLinphone()
+        wakeLock?.release()
+        wifiLock?.release()
         Log.d(TAG, "Сервис уничтожен")
     }
 
