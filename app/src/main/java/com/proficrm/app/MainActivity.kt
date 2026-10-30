@@ -58,7 +58,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         if (hasAudioPermission()) {
-            startMyService()
+            startAllServices()
         } else {
             requestPermissions()
         }
@@ -86,7 +86,6 @@ class MainActivity : AppCompatActivity() {
         webView.webViewClient = WebViewClient()
 
         webView.webChromeClient = object : WebChromeClient() {
-            // Логирование JS в logcat
             override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
                 android.util.Log.d("ProfiCrmWebView", "${consoleMessage.message()} (${consoleMessage.lineNumber()})")
                 return true
@@ -198,6 +197,45 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Вызывается из LinphoneService при входящем звонке
+     */
+    fun onNativeIncomingCall(number: String) {
+        runOnUiThread {
+            webView.evaluateJavascript(
+                "(function(){if(window.phoneComponent){window.phoneComponent.onNativeIncomingCall('$number');}})();",
+                null
+            )
+        }
+    }
+
+    fun onNativeCallActive() {
+        runOnUiThread {
+            webView.evaluateJavascript(
+                "(function(){if(window.phoneComponent){window.phoneComponent.callState='active';}})();",
+                null
+            )
+        }
+    }
+
+    fun onNativeCallEnded() {
+        runOnUiThread {
+            webView.evaluateJavascript(
+                "(function(){if(window.phoneComponent){window.phoneComponent.callState='idle';}})();",
+                null
+            )
+        }
+    }
+
+    fun onSipRegistrationState(state: String, message: String) {
+        runOnUiThread {
+            webView.evaluateJavascript(
+                "(function(){console.log('SIP-регистрация: $state ($message)');})();",
+                null
+            )
+        }
+    }
+
     inner class WebAppInterface(private val context: Context) {
 
         @JavascriptInterface
@@ -215,8 +253,10 @@ class MainActivity : AppCompatActivity() {
                 }
                 val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
                 audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVolume, 0)
-                println("🔊 Громкая связь: $enabled")
-            } catch (e: Exception) { e.printStackTrace() }
+                android.util.Log.d("ProfiCrm", "🔊 Громкая связь: $enabled")
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
         @JavascriptInterface
@@ -233,7 +273,9 @@ class MainActivity : AppCompatActivity() {
                     @Suppress("DEPRECATION")
                     audioManager.isSpeakerphoneOn = enableSpeaker
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
         @JavascriptInterface
@@ -242,7 +284,9 @@ class MainActivity : AppCompatActivity() {
                 val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
                 val target = (max * volumePercent / 100).coerceIn(0, max)
                 audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, target, 0)
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
         @JavascriptInterface
@@ -250,9 +294,11 @@ class MainActivity : AppCompatActivity() {
             try {
                 if (proximityWakeLock?.isHeld == false) {
                     proximityWakeLock?.acquire(60 * 60 * 1000L)
-                    println("📡 Датчик приближения ВКЛЮЧЕН")
+                    android.util.Log.d("ProfiCrm", "📡 Датчик приближения ВКЛЮЧЕН")
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
         @JavascriptInterface
@@ -260,9 +306,11 @@ class MainActivity : AppCompatActivity() {
             try {
                 if (proximityWakeLock?.isHeld == true) {
                     proximityWakeLock?.release()
-                    println("📡 Датчик приближения ВЫКЛЮЧЕН")
+                    android.util.Log.d("ProfiCrm", "📡 Датчик приближения ВЫКЛЮЧЕН")
                 }
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
         @JavascriptInterface
@@ -308,7 +356,9 @@ class MainActivity : AppCompatActivity() {
 
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 manager.notify(1001, notification)
-            } catch (e: Exception) { e.printStackTrace() }
+            } catch (e: Exception) {
+                e.printStackTrace()
+            }
         }
 
         @JavascriptInterface
@@ -321,7 +371,9 @@ class MainActivity : AppCompatActivity() {
         try {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(1001)
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     private fun hasAudioPermission(): Boolean {
@@ -339,19 +391,30 @@ class MainActivity : AppCompatActivity() {
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
         if (requestCode == 101 && hasAudioPermission()) {
-            startMyService()
+            startAllServices()
         }
     }
 
-    private fun startMyService() {
+    private fun startAllServices() {
         try {
+            // Запускаем LinphoneService (нативный SIP-клиент)
+            val linphoneIntent = Intent(this, LinphoneService::class.java)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                startForegroundService(linphoneIntent)
+            } else {
+                startService(linphoneIntent)
+            }
+
+            // Запускаем ForegroundService (для поддержания WebView активным)
             val serviceIntent = Intent(this, ForegroundService::class.java)
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 startForegroundService(serviceIntent)
             } else {
                 startService(serviceIntent)
             }
-        } catch (e: Exception) { e.printStackTrace() }
+        } catch (e: Exception) {
+            e.printStackTrace()
+        }
     }
 
     override fun onResume() {
