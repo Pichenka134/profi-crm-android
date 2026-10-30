@@ -19,8 +19,10 @@ jobs:
           distribution: 'temurin'
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
         with:
+          # Явно указываем пакеты, чтобы не запрашивался удалённый "tools"
+          packages: 'platform-tools'
           ndk-version: 25.2.9519653
 
       - name: Download Linphone AAR
