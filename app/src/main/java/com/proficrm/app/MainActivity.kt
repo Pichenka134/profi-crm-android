@@ -4,17 +4,19 @@ import android.Manifest
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.os.PowerManager
 import android.provider.Settings
@@ -22,6 +24,7 @@ import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AnimationUtils
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
@@ -30,13 +33,13 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
-import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
 class MainActivity : AppCompatActivity() {
@@ -44,10 +47,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var audioManager: AudioManager
     private lateinit var permissionGate: ScrollView
-    private lateinit var rootLayout: LinearLayout
+    private lateinit var successScreen: LinearLayout
+    private lateinit var rootLayout: FrameLayout
     private var orderDialog: Dialog? = null
     private var proximityWakeLock: PowerManager.WakeLock? = null
     private var webViewLoaded = false
+    private var successShown = false
 
     data class PermissionIssue(
         val type: String,
@@ -76,22 +81,18 @@ class MainActivity : AppCompatActivity() {
             "ProfiCrm::ProximitySensor"
         )
 
-        // Корневой контейнер
-        rootLayout = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
+        rootLayout = FrameLayout(this).apply {
             layoutParams = ViewGroup.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
             )
         }
 
-        // WebView (скрыт, пока разрешения не выданы)
         webView = WebView(this).apply {
             visibility = View.GONE
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
             )
             settings.apply {
                 javaScriptEnabled = true
@@ -130,31 +131,78 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Экран с требованиями разрешений
         permissionGate = ScrollView(this).apply {
-            layoutParams = LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                0,
-                1f
-            )
+            visibility = View.GONE
             setBackgroundColor(Color.parseColor("#F8F9FA"))
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        }
+
+        successScreen = buildSuccessScreen().apply {
+            visibility = View.GONE
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
         }
 
         rootLayout.addView(webView)
         rootLayout.addView(permissionGate)
+        rootLayout.addView(successScreen)
         setContentView(rootLayout)
 
-        // Первичная проверка
         refreshGate()
     }
 
-    /**
-     * Проверяет все критические настройки.
-     */
+    private fun buildSuccessScreen(): LinearLayout {
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#10B981"))
+            setPadding(40, 40, 40, 40)
+        }
+
+        val iconCircle = TextView(this).apply {
+            text = "✓"
+            textSize = 64f
+            setTextColor(Color.parseColor("#10B981"))
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(180, 180).apply {
+                setMargins(0, 0, 0, 40)
+            }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(Color.WHITE)
+            }
+        }
+        container.addView(iconCircle)
+
+        container.addView(TextView(this).apply {
+            text = "Всё готово!"
+            textSize = 32f
+            setTextColor(Color.WHITE)
+            setTypeface(null, Typeface.BOLD)
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, 16)
+        })
+
+        container.addView(TextView(this).apply {
+            text = "Приложение настроено.\nВходящие звонки будут приходить без задержек."
+            textSize = 16f
+            setTextColor(Color.parseColor("#D1FAE5"))
+            gravity = Gravity.CENTER
+            setLineSpacing(6f, 1.2f)
+        })
+
+        return container
+    }
+
     private fun getPermissionIssues(): List<PermissionIssue> {
         val issues = mutableListOf<PermissionIssue>()
 
-        // 1. Микрофон
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
             != PackageManager.PERMISSION_GRANTED
         ) {
@@ -167,7 +215,6 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // 2. Уведомления (Android 13+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS)
                 != PackageManager.PERMISSION_GRANTED
@@ -182,7 +229,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 3. Игнорирование оптимизации батареи
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
             if (!pm.isIgnoringBatteryOptimizations(packageName)) {
@@ -196,7 +242,6 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // 4. Полноэкранные уведомления (Android 14+)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
             val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             if (!nm.canUseFullScreenIntent()) {
@@ -213,27 +258,53 @@ class MainActivity : AppCompatActivity() {
         return issues
     }
 
-    /**
-     * Перерисовывает экран: показывает либо WebView, либо блокировщик.
-     */
     private fun refreshGate() {
         val issues = getPermissionIssues()
 
         if (issues.isEmpty()) {
-            permissionGate.visibility = View.GONE
-            webView.visibility = View.VISIBLE
-
-            // Запускаем сервисы и грузим URL только один раз
-            if (!webViewLoaded) {
-                webViewLoaded = true
-                startAllServices()
-                webView.loadUrl("https://profi-lead-crm.ru/admin")
+            if (!successShown) {
+                showSuccessAndLoad()
+            } else {
+                permissionGate.visibility = View.GONE
+                successScreen.visibility = View.GONE
+                webView.visibility = View.VISIBLE
             }
         } else {
             permissionGate.visibility = View.VISIBLE
+            successScreen.visibility = View.GONE
             webView.visibility = View.GONE
+            successShown = false
             renderGate(issues)
         }
+    }
+
+    private fun showSuccessAndLoad() {
+        successShown = true
+
+        permissionGate.visibility = View.GONE
+        successScreen.visibility = View.VISIBLE
+        webView.visibility = View.GONE
+
+        successScreen.startAnimation(
+            AnimationUtils.loadAnimation(this, android.R.anim.fade_in)
+        )
+
+        startAllServices()
+
+        Handler(Looper.getMainLooper()).postDelayed({
+            successScreen.startAnimation(
+                AnimationUtils.loadAnimation(this, android.R.anim.fade_out)
+            )
+            Handler(Looper.getMainLooper()).postDelayed({
+                successScreen.visibility = View.GONE
+                webView.visibility = View.VISIBLE
+
+                if (!webViewLoaded) {
+                    webViewLoaded = true
+                    webView.loadUrl("https://profi-lead-crm.ru/admin")
+                }
+            }, 300)
+        }, 2000)
     }
 
     private fun renderGate(issues: List<PermissionIssue>) {
@@ -242,7 +313,6 @@ class MainActivity : AppCompatActivity() {
             setPadding(40, 80, 40, 40)
         }
 
-        // Заголовок
         container.addView(TextView(this).apply {
             text = "⚙️ Требуется настройка"
             textSize = 24f
@@ -257,7 +327,6 @@ class MainActivity : AppCompatActivity() {
             setPadding(0, 12, 0, 32)
         })
 
-        // Пункты
         issues.forEach { issue ->
             val card = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
@@ -268,6 +337,10 @@ class MainActivity : AppCompatActivity() {
                     LinearLayout.LayoutParams.WRAP_CONTENT
                 ).apply {
                     setMargins(0, 0, 0, 16)
+                }
+                background = GradientDrawable().apply {
+                    cornerRadius = 24f
+                    setColor(Color.WHITE)
                 }
             }
 
@@ -299,7 +372,6 @@ class MainActivity : AppCompatActivity() {
             container.addView(card)
         }
 
-        // Кнопка "Проверить снова"
         container.addView(Button(this).apply {
             text = "🔄 Проверить снова"
             setBackgroundColor(Color.parseColor("#10B981"))
@@ -318,9 +390,6 @@ class MainActivity : AppCompatActivity() {
         permissionGate.addView(container)
     }
 
-    /**
-     * Открывает нужный экран настроек в зависимости от типа проблемы.
-     */
     private fun fixIssue(type: String) {
         when (type) {
             "mic" -> {
@@ -346,7 +415,6 @@ class MainActivity : AppCompatActivity() {
                         intent.data = Uri.parse("package:$packageName")
                         startActivity(intent)
                     } catch (e: Exception) {
-                        // Fallback — открываем общий список приложений
                         startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
                     }
                 }
@@ -358,7 +426,6 @@ class MainActivity : AppCompatActivity() {
                         intent.data = Uri.parse("package:$packageName")
                         startActivity(intent)
                     } catch (e: Exception) {
-                        // Fallback — открываем страницу приложения в настройках
                         val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
                         intent.data = Uri.parse("package:$packageName")
                         startActivity(intent)
@@ -381,7 +448,6 @@ class MainActivity : AppCompatActivity() {
         super.onResume()
         webView.onResume()
         webView.resumeTimers()
-        // Пользователь мог вернуться из настроек — перепроверяем всё
         refreshGate()
     }
 
@@ -415,9 +481,7 @@ class MainActivity : AppCompatActivity() {
                     cancelCallNotification()
                 }, 500)
             }
-            "SHOW_INCOMING_CALL" -> {
-                // Приложение уже открыто — ничего не делаем
-            }
+            "SHOW_INCOMING_CALL" -> {}
             "SHOW_MISSED_CALLS" -> {
                 webView.postDelayed({
                     if (webViewLoaded) webView.loadUrl("https://profi-lead-crm.ru/admin/calls")
