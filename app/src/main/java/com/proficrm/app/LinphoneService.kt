@@ -1,4 +1,4 @@
-package com.proficrm.app // Если у тебя другой пакет, оставь свою первую строку
+package com.proficrm.app
 
 import android.app.*
 import android.content.Context
@@ -62,25 +62,22 @@ class LinphoneService : Service() {
             c.transports.tcpPort = 5060
             c.isIpv6Enabled = false
             
-            // Создаём AuthInfo
             val authInfo = factory.createAuthInfo(login, null, password, null, null, server)
             
-            // Создаём AccountParams (новый API вместо ProxyConfig)
             val params = c.createAccountParams()
             
-            // 1. Настраиваем identity (кто мы)
             val identity = factory.createAddress("sip:$login@$server")
             params.identityAddress = identity
             
-            // 2. Настраиваем сервер и транспорт
-            val serverAddress = factory.createAddress("sip:$server")
-            serverAddress.transport = TransportType.Tcp
+            // ИСПРАВЛЕНО: используем безопасный вызов (?.) для nullable Address
+            val serverAddress = factory.createAddress("sip:$server")?.apply {
+                transport = TransportType.Tcp
+            }
             params.serverAddress = serverAddress
             
-            // 3. Включаем регистрацию (актуальное свойство)
-            params.registerEnabled = true
+            // ИСПРАВЛЕНО: правильное имя свойства — isRegisterEnabled
+            params.isRegisterEnabled = true
             
-            // 4. Создаём аккаунт и добавляем его в Core
             val account = c.createAccount(params)
             c.addAuthInfo(authInfo)
             c.addAccount(account)
