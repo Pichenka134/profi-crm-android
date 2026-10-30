@@ -9,6 +9,10 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
@@ -16,6 +20,7 @@ import android.os.Bundle
 import android.os.Message
 import android.os.PowerManager
 import android.view.ViewGroup
+import android.view.WindowManager
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -28,12 +33,15 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
-class MainActivity : AppCompatActivity() {
+class MainActivity : AppCompatActivity(), SensorEventListener {
 
     private lateinit var webView: WebView
     private lateinit var audioManager: AudioManager
+    private lateinit var sensorManager: SensorManager
+    private var proximitySensor: Sensor? = null
     private var orderDialog: Dialog? = null
-    private var proximityWakeLock: PowerManager.WakeLock? = null
+    private var isProximityEnabled = false
+    private var originalBrightness = -1f
 
     companion object {
         var instance: MainActivity? = null
@@ -44,19 +52,13 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         instance = this
 
-        // Включаем отладку WebView для chrome://inspect
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             WebView.setWebContentsDebuggingEnabled(true)
         }
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-
-        // Инициализация WakeLock для датчика приближения
-        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-        proximityWakeLock = powerManager.newWakeLock(
-            PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
-            "ProfiCrm::ProximitySensor"
-        )
+        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
 
         if (hasAudioPermission()) {
             startMyService()
@@ -199,7 +201,6 @@ class MainActivity : AppCompatActivity() {
         fun setSpeakerphoneOn(enabled: Boolean) {
             try {
                 audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
                     val devices = audioManager.availableCommunicationDevices
                     val targetType = if (enabled) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
@@ -211,10 +212,8 @@ class MainActivity : AppCompatActivity() {
                     @Suppress("DEPRECATION")
                     audioManager.isSpeakerphoneOn = enabled
                 }
-
                 val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
                 audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVolume, 0)
-
                 println("🔊 Громкая связь: $enabled")
             } catch (e: Exception) {
                 e.printStackTrace()
@@ -256,8 +255,9 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun enableProximitySensor() {
             try {
-                if (proximityWakeLock?.isHeld == false) {
-                    proximityWakeLock?.acquire(60 * 60 * 1000L)
+                if (!isProximityEnabled && proximitySensor != null) {
+                    sensorManager.registerListener(this@MainActivity, proximitySensor, SensorManager.SENSOR_DELAY_NORMAL)
+                    isProximityEnabled = true
                     println("📡 Датчик приближения ВКЛЮЧЕН")
                 }
             } catch (e: Exception) {
@@ -268,8 +268,15 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun disableProximitySensor() {
             try {
-                if (proximityWakeLock?.isHeld == true) {
-                    proximityWakeLock?.release()
+                if (isProximityEnabled) {
+                    sensorManager.unregisterListener(this@MainActivity)
+                    isProximityEnabled = false
+                    // Восстанавливаем яркость, если экран был погашен
+                    val window = this@MainActivity.window
+                    val params = window.attributes
+                    params.screenBrightness = originalBrightness
+                    window.attributes = params
+                    window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
                     println("📡 Датчик приближения ВЫКЛЮЧЕН")
                 }
             } catch (e: Exception) {
@@ -331,6 +338,33 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    override fun onSensorChanged(event: SensorEvent?) {
+        if (event?.sensor?.type == Sensor.TYPE_PROXIMITY && isProximityEnabled) {
+            val distance = event.values[0]
+            val window = window
+            val params = window.attributes
+
+            if (distance < proximitySensor?.maximumRange ?: 0f) {
+                // Объект близко (ухо) — гасим экран и блокируем касания
+                if (originalBrightness == -1f) {
+                    originalBrightness = params.screenBrightness
+                }
+                params.screenBrightness = 0f
+                window.attributes = params
+                window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+            } else {
+                // Объект далеко — восстанавливаем яркость
+                params.screenBrightness = originalBrightness
+                window.attributes = params
+                window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+            }
+        }
+    }
+
+    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
+        // Не используется
+    }
+
     private fun cancelCallNotification() {
         try {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -376,7 +410,7 @@ class MainActivity : AppCompatActivity() {
         super.onDestroy()
         instance = null
         orderDialog?.dismiss()
-        proximityWakeLock?.release()
+        sensorManager.unregisterListener(this)
         webView.destroy()
     }
 }
