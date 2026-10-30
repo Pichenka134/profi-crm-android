@@ -1,4 +1,4 @@
-package com.example.proficrm
+package com.proficrm.app // ОСТАВЬ СВОЮ СТРОКУ PACKAGE, ЕСЛИ ОНА ДРУГАЯ
 
 import android.Manifest
 import android.annotation.SuppressLint
@@ -11,6 +11,8 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.util.Log
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
+import android.webkit.WebChromeClient
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
@@ -27,7 +29,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
 
         // 1. Запрашиваем разрешения
-        requestPermissions()
+        requestAppPermissions()
 
         // 2. Отключаем оптимизацию батареи (чтобы сервис не убивало)
         requestIgnoreBatteryOptimizations()
@@ -36,7 +38,15 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         webView.settings.javaScriptEnabled = true
         webView.settings.domStorageEnabled = true
-        webView.settings.mediaPlaybackRequiresUserGesture = false // Важно для WebRTC
+        webView.settings.mediaPlaybackRequiresUserGesture = false
+        
+        // ВАЖНО: Разрешаем WebView использовать микрофон
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onPermissionRequest(request: PermissionRequest?) {
+                request?.grant(request.resources)
+            }
+        }
+        
         webView.webViewClient = WebViewClient()
         
         // Подключаем мост для вызова из JS
@@ -45,7 +55,7 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl("https://profi-lead-crm.ru/admin/orders")
     }
 
-    private fun requestPermissions() {
+    private fun requestAppPermissions() {
         val permissions = mutableListOf(
             Manifest.permission.RECORD_AUDIO,
             Manifest.permission.MODIFY_AUDIO_SETTINGS
@@ -82,12 +92,13 @@ class MainActivity : AppCompatActivity() {
         fun startNativeSip(login: String, password: String, server: String) {
             Log.d("MainActivity", "Запуск нативного SIP для $login")
             val intent = Intent(this@MainActivity, LinphoneService::class.java).apply {
-                putExtra("login", login)
-                putExtra("password", password)
-                putExtra("server", server)
+                putExtra("sip_login", login)
+                putExtra("sip_password", password)
+                putExtra("sip_server", server)
             }
+            // КРИТИЧЕСКИ ВАЖНО: Для Android 8+ используем startForegroundService
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(intent) // Важно для Android 8+
+                startForegroundService(intent)
             } else {
                 startService(intent)
             }
@@ -96,7 +107,6 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun setSpeakerphoneOn(on: Boolean) {
             Log.d("MainActivity", "Динамик: $on")
-            // Здесь можно добавить управление аудио-маршрутом через AudioManager
         }
         
         @JavascriptInterface
@@ -106,8 +116,7 @@ class MainActivity : AppCompatActivity() {
 
         @JavascriptInterface
         fun showIncomingCallNotification(number: String, name: String) {
-            // Этот метод уже не нужен, если LinphoneService сам показывает уведомления,
-            // но можно оставить пустым для совместимости с JS
+            // Обрабатывается в LinphoneService
         }
     }
 }
