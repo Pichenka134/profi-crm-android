@@ -24,8 +24,8 @@ class LinphoneService : Service() {
 
     private val CHANNEL_ID = "LinphoneServiceChannel"
     private val TAG = "LinphoneService"
-    private lateinit var core: Core
-    private lateinit var coreListener: CoreListenerStub
+    private var core: Core? = null
+    private var coreListener: CoreListenerStub? = null
 
     private var currentLogin: String? = null
     private var currentPassword: String? = null
@@ -57,8 +57,6 @@ class LinphoneService : Service() {
             currentLogin = login
             currentPassword = password
             currentServer = server
-        } else {
-            Log.d(TAG, "Учётные данные не изменились, Linphone уже работает")
         }
 
         return START_STICKY
@@ -91,7 +89,7 @@ class LinphoneService : Service() {
                     message: String
                 ) {
                     Log.d(TAG, "Состояние звонка: $state")
-                    val callerNumber = call.remoteAddress.username ?: "Неизвестный"
+                    val callerNumber = call.remoteAddress?.username ?: "Неизвестный"
 
                     when (state) {
                         Call.State.IncomingReceived -> {
@@ -110,27 +108,31 @@ class LinphoneService : Service() {
                 }
             }
 
-            core.addListener(coreListener)
+            core?.addListener(coreListener)
 
-            val authInfo: AuthInfo = factory.createAuthInfo(login, null, password, null, null, server, null)
-            core.addAuthInfo(authInfo)
+            val authInfo = factory.createAuthInfo(login, null, password, null, null, server, null)
+            core?.addAuthInfo(authInfo)
 
             val identityAddress = factory.createAddress("sip:$login@$server")
             val serverAddress = factory.createAddress("sip:$server")
-            serverAddress.transport = TransportType.Udp
-            serverAddress.port = 5068
+            serverAddress?.transport = TransportType.Udp
+            serverAddress?.port = 5068
 
-            val params = core.createAccountParams()
-            params.identityAddress = identityAddress
-            params.serverAddress = serverAddress
-            params.isRegisterEnabled = true
-            params.isPushNotificationAllowed = true
+            val params = core?.createAccountParams()
+            if (params != null) {
+                params.identityAddress = identityAddress
+                params.serverAddress = serverAddress
+                params.isRegisterEnabled = true
+                params.isPushNotificationAllowed = true
 
-            val account = core.createAccount(params)
-            core.addAccount(account)
-            core.defaultAccount = account
+                val account = core?.createAccount(params)
+                if (account != null) {
+                    core?.addAccount(account)
+                    core?.defaultAccount = account
+                }
+            }
 
-            core.start()
+            core?.start()
             Log.d(TAG, "Linphone Core запущен для $login")
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка инициализации Linphone", e)
@@ -139,11 +141,10 @@ class LinphoneService : Service() {
 
     private fun stopLinphone() {
         try {
-            if (::core.isInitialized) {
-                core.removeListener(coreListener)
-                core.stop()
-                Log.d(TAG, "Linphone остановлен")
-            }
+            core?.removeListener(coreListener)
+            core?.stop()
+            core = null
+            Log.d(TAG, "Linphone остановлен")
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка при остановке Linphone", e)
         }
