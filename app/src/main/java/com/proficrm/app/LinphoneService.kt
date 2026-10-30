@@ -1,361 +1,151 @@
-package com.proficrm.app
+package com.example.proficrm
 
-import android.app.Notification
-import android.app.NotificationChannel
-import android.app.NotificationManager
-import android.app.PendingIntent
-import android.app.Service
+import android.app.*
 import android.content.Context
 import android.content.Intent
-import android.graphics.Color
-import android.net.wifi.WifiManager
 import android.os.Build
-import android.os.Handler
 import android.os.IBinder
-import android.os.Looper
 import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
-import org.linphone.core.AuthInfo
-import org.linphone.core.Call
-import org.linphone.core.Core
-import org.linphone.core.CoreListenerStub
-import org.linphone.core.Factory
-import org.linphone.core.ProxyConfig
-import org.linphone.core.RegistrationState
-import org.linphone.core.TransportType
+import org.linphone.core.*
+import org.linphone.core.tools.Log as LinphoneLog
 
 class LinphoneService : Service() {
 
-    private val TAG = "LinphoneService"
     private var core: Core? = null
-    private var coreListener: CoreListenerStub? = null
     private var wakeLock: PowerManager.WakeLock? = null
-    private var wifiLock: WifiManager.WifiLock? = null
-    private val handler = Handler(Looper.getMainLooper())
-    private var refreshRunnable: Runnable? = null
-
-    private var currentLogin: String? = null
-    private var currentPassword: String? = null
-    private var currentServer: String? = null
-
-    // Состояния для отслеживания пропущенных
-    private var incomingCallReceived = false
-    private var callConnected = false
-    private var incomingCallerNumber = ""
+    private val CHANNEL_ID = "SipServiceChannel"
+    private val NOTIF_ID = 101
 
     override fun onCreate() {
         super.onCreate()
-        Log.d(TAG, "Сервис создан")
-        createNotificationChannels()
-        startForeground(2, buildServiceNotification())
-        acquireLocks()
-    }
-
-    private fun createNotificationChannels() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-
-            // Канал для foreground-сервиса (невидимый)
-            val serviceChannel = NotificationChannel(
-                "ProfiCrmServiceChannel",
-                "Сервис SIP",
-                NotificationManager.IMPORTANCE_LOW
-            )
-            manager.createNotificationChannel(serviceChannel)
-
-            // Канал для входящих звонков (полноэкранный)
-            val callChannel = NotificationChannel(
-                "ProfiCrmCallChannel",
-                "Входящие звонки",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Уведомления о входящих звонках"
-                enableVibration(true)
-                enableLights(true)
-                setShowBadge(true)
-                lockscreenVisibility = Notification.VISIBILITY_PUBLIC
-            }
-            manager.createNotificationChannel(callChannel)
-
-            // Канал для пропущенных звонков
-            val missedChannel = NotificationChannel(
-                "ProfiCrmMissedChannel",
-                "Пропущенные звонки",
-                NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Уведомления о пропущенных звонках"
-                enableVibration(true)
-                setShowBadge(true)
-            }
-            manager.createNotificationChannel(missedChannel)
-        }
-    }
-
-    private fun acquireLocks() {
-        try {
-            val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
-            wakeLock = powerManager.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "ProfiCrm::LinphoneWakeLock"
-            )
-            wakeLock?.acquire()
-
-            val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
-            wifiLock = wifiManager.createWifiLock(
-                WifiManager.WIFI_MODE_FULL_HIGH_PERF,
-                "ProfiCrm::LinphoneWifiLock"
-            )
-            wifiLock?.acquire()
-        } catch (e: Exception) {
-            Log.e(TAG, "Ошибка при получении блокировок", e)
-        }
+        Log.d("LinphoneService", "Сервис создан")
+        createNotificationChannel()
+        acquireWakeLock()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val login = intent?.getStringExtra("sip_login")
-        val password = intent?.getStringExtra("sip_password")
-        val server = intent?.getStringExtra("sip_server") ?: "sipproxy.telphin.ru"
-
-        if (login.isNullOrEmpty() || password.isNullOrEmpty()) {
-            return START_STICKY
+        // ВАЖНО: Выводим сервис в foreground, иначе Android 12+ его убьет
+        val notification = createNotification("SIP-телефон активен", "Ожидание звонков...")
+        
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(NOTIF_ID, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_PHONE_CALL or ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
+        } else {
+            startForeground(NOTIF_ID, notification)
         }
 
-        if (login != currentLogin || password != currentPassword || server != currentServer) {
-            stopLinphone()
+        val login = intent?.getStringExtra("login")
+        val password = intent?.getStringExtra("password")
+        val server = intent?.getStringExtra("server") ?: "sipproxy.telphin.ru"
+
+        if (login != null && password != null && core == null) {
             initLinphone(login, password, server)
-            currentLogin = login
-            currentPassword = password
-            currentServer = server
         }
 
-        return START_STICKY
+        return START_STICKY // Если система убьет, она попытается перезапустить
     }
 
     private fun initLinphone(login: String, password: String, server: String) {
-        try {
-            val factory = Factory.instance()
-            val coreConfig = factory.createConfigWithFactory(
-                "${filesDir.absolutePath}/.linphonerc",
-                "${filesDir.absolutePath}/linphonerc"
-            )
-            core = factory.createCoreWithConfig(coreConfig, this)
+        Log.d("LinphoneService", "Инициализация Linphone для $login")
+        
+        val factory = Factory.instance()
+        factory.setDebugMode(true, "Linphone")
+        factory.setStoragePath(filesDir.absolutePath)
 
-            core?.isKeepAliveEnabled = true
-            core?.isNetworkReachable = true
+        core = factory.createCore(null, null, this)
+        core?.let { c ->
+            // Включаем TCP для стабильности в фоне (UDP часто блокируется)
+            c.transports.tcpPort = 5060
+            c.isIpv6Enabled = false
+            
+            // Настройка аккаунта
+            val authInfo = Factory.instance().createAuthInfo(login, null, password, null, null, server)
+            val params = c.createProxyConfig()
+            params.identityAddress = Factory.instance().createAddress("sip:$login@$server")
+            params.serverAddr = "sip:$server"
+            params.transport = TransportType.Tcp // ВАЖНО для фона!
+            params.isRegisterEnabled = true
+            params.register()
+            c.addProxyConfig(params)
+            c.defaultProxyConfig = params
+            
+            // Добавляем авторизацию
+            c.addAuthInfo(authInfo)
 
-            coreListener = object : CoreListenerStub() {
-                override fun onRegistrationStateChanged(
-                    core: Core,
-                    proxyConfig: ProxyConfig,
-                    state: RegistrationState,
-                    message: String
-                ) {
-                    Log.d(TAG, "Статус регистрации SIP: $state, сообщение: $message")
-                    MainActivity.instance?.onSipRegistrationState(state.name, message)
-                }
-
-                override fun onCallStateChanged(
-                    core: Core,
-                    call: Call,
-                    state: Call.State,
-                    message: String
-                ) {
-                    Log.d(TAG, "Состояние звонка: $state")
-                    val callerNumber = call.remoteAddress?.username ?: "Неизвестный"
-
-                    when (state) {
-                        Call.State.IncomingReceived -> {
-                            incomingCallReceived = true
-                            callConnected = false
-                            incomingCallerNumber = callerNumber
-                            showFullScreenCallNotification(callerNumber)
-                            MainActivity.instance?.onNativeIncomingCall(callerNumber)
-                        }
-                        Call.State.Connected -> {
-                            callConnected = true
-                            cancelCallNotification()
-                            MainActivity.instance?.onNativeCallActive()
-                        }
-                        Call.State.End, Call.State.Error -> {
-                            if (incomingCallReceived && !callConnected) {
-                                showMissedCallNotification(incomingCallerNumber)
-                            }
-                            incomingCallReceived = false
-                            callConnected = false
-                            incomingCallerNumber = ""
-                            cancelCallNotification()
-                            MainActivity.instance?.onNativeCallEnded()
-                        }
-                        else -> {}
+            // Слушаем звонки
+            c.addListener(object : CoreListenerStub() {
+                override fun onCallStateChanged(core: Core, call: Call, state: Call.State?, message: String) {
+                    Log.d("LinphoneService", "Состояние звонка: $state")
+                    if (state == Call.State.IncomingReceived) {
+                        showIncomingCallNotification(call)
                     }
                 }
-            }
+            })
 
-            core?.addListener(coreListener)
-
-            val authInfo = factory.createAuthInfo(login, null, password, null, null, server, null)
-            core?.addAuthInfo(authInfo)
-
-            val identityAddress = factory.createAddress("sip:$login@$server")
-            val serverAddress = factory.createAddress("sip:$server")
-            serverAddress?.transport = TransportType.Tcp
-            serverAddress?.port = 5060
-
-            val params = core?.createAccountParams()
-            if (params != null) {
-                params.identityAddress = identityAddress
-                params.serverAddress = serverAddress
-                params.isRegisterEnabled = true
-                params.expires = 60
-
-                val account = core?.createAccount(params)
-                if (account != null) {
-                    core?.addAccount(account)
-                    core?.defaultAccount = account
-                }
-            }
-
-            core?.start()
-            startRegistrationRefresh()
-            Log.d(TAG, "Linphone Core запущен для $login (TCP)")
-        } catch (e: Exception) {
-            Log.e(TAG, "Ошибка инициализации Linphone", e)
+            c.start()
         }
     }
 
-    private fun startRegistrationRefresh() {
-        refreshRunnable = object : Runnable {
-            override fun run() {
-                try {
-                    core?.refreshRegisters()
-                    Log.d(TAG, "Регистрация SIP обновлена принудительно")
-                } catch (e: Exception) {
-                    Log.e(TAG, "Ошибка обновления регистрации", e)
-                }
-                handler.postDelayed(this, 50000)
-            }
-        }
-        handler.postDelayed(refreshRunnable!!, 50000)
-    }
-
-    private fun stopLinphone() {
-        try {
-            refreshRunnable?.let { handler.removeCallbacks(it) }
-            refreshRunnable = null
-            core?.removeListener(coreListener)
-            core?.stop()
-            core = null
-            Log.d(TAG, "Linphone остановлен")
-        } catch (e: Exception) {
-            Log.e(TAG, "Ошибка при остановке Linphone", e)
-        }
-    }
-
-    /**
-     * Полноэкранное уведомление о входящем звонке
-     */
-    private fun showFullScreenCallNotification(number: String) {
+    private fun showIncomingCallNotification(call: Call) {
+        val remoteAddress = call.remoteAddress?.username ?: "Неизвестный"
+        
         val fullScreenIntent = Intent(this, MainActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            action = "SHOW_INCOMING_CALL"
-            putExtra("caller_number", number)
+            putExtra("incoming_call", true)
+            putExtra("caller_number", remoteAddress)
         }
-        val fullScreenPending = PendingIntent.getActivity(
-            this, 4, fullScreenIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val acceptIntent = Intent(this, MainActivity::class.java).apply {
-            action = "ACCEPT_CALL"
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val acceptPending = PendingIntent.getActivity(
-            this, 1, acceptIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val declineIntent = Intent(this, MainActivity::class.java).apply {
-            action = "DECLINE_CALL"
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-        }
-        val declinePending = PendingIntent.getActivity(
-            this, 2, declineIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        val notification = NotificationCompat.Builder(this, "ProfiCrmCallChannel")
-            .setContentTitle("Входящий звонок")
-            .setContentText("Номер: $number")
-            .setSmallIcon(android.R.drawable.ic_menu_call)
-            .setPriority(NotificationCompat.PRIORITY_MAX)
-            .setCategory(NotificationCompat.CATEGORY_CALL)
-            .setFullScreenIntent(fullScreenPending, true)
-            .setAutoCancel(true)
-            .setOngoing(true)
-            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .addAction(android.R.drawable.ic_menu_call, "Принять", acceptPending)
-            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "Сбросить", declinePending)
-            .build()
-
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(1002, notification)
-    }
-
-    /**
-     * Уведомление о пропущенном звонке
-     */
-    private fun showMissedCallNotification(number: String) {
-        val intent = Intent(this, MainActivity::class.java).apply {
-            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            action = "SHOW_MISSED_CALLS"
-        }
+        
         val pendingIntent = PendingIntent.getActivity(
-            this, 5, intent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            this, 0, fullScreenIntent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
-        val notification = NotificationCompat.Builder(this, "ProfiCrmMissedChannel")
-            .setContentTitle("Пропущенный звонок")
-            .setContentText("Звонок от $number")
-            .setSmallIcon(android.R.drawable.ic_menu_call)
+        val notification = NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle("Входящий звонок")
+            .setContentText("Звонит: $remoteAddress")
+            .setSmallIcon(android.R.drawable.sym_action_call)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setCategory(NotificationCompat.CATEGORY_MISSED_CALL)
-            .setAutoCancel(true)
-            .setContentIntent(pendingIntent)
-            .setColor(Color.RED)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setFullScreenIntent(pendingIntent, true) // Разбуживает экран
+            .setOngoing(true)
             .build()
 
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.notify(1003, notification)
+        val notificationManager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.notify(NOTIF_ID + 1, notification)
     }
 
-    private fun cancelCallNotification() {
-        val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-        manager.cancel(1002)
+    private fun createNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val serviceChannel = NotificationChannel(
+                CHANNEL_ID, "SIP Сервис",
+                NotificationManager.IMPORTANCE_LOW
+            )
+            val manager = getSystemService(NotificationManager::class.java)
+            manager.createNotificationChannel(serviceChannel)
+        }
+    }
+
+    private fun createNotification(title: String, text: String): Notification {
+        return NotificationCompat.Builder(this, CHANNEL_ID)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setSmallIcon(android.R.drawable.stat_sys_phone_call)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .build()
+    }
+
+    private fun acquireWakeLock() {
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        wakeLock = powerManager.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "ProfiCrm::SipWakeLock")
+        wakeLock?.acquire(10 * 60 * 1000L) // 10 минут, потом обновится
+    }
+
+    override fun onDestroy() {
+        Log.d("LinphoneService", "Сервис уничтожен")
+        core?.stop()
+        wakeLock?.let { if (it.isHeld) it.release() }
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
-
-    override fun onDestroy() {
-        super.onDestroy()
-        stopLinphone()
-        wakeLock?.release()
-        wifiLock?.release()
-    }
-
-    private fun buildServiceNotification(): Notification {
-        val notificationIntent = Intent(this, MainActivity::class.java)
-        val pendingIntent = PendingIntent.getActivity(
-            this, 0, notificationIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
-        )
-
-        return NotificationCompat.Builder(this, "ProfiCrmServiceChannel")
-            .setContentTitle("Profi CRM")
-            .setContentText("SIP-клиент активен")
-            .setSmallIcon(android.R.drawable.ic_menu_call)
-            .setContentIntent(pendingIntent)
-            .build()
-    }
 }
