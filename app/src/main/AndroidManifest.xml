@@ -1,24 +1,22 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    xmlns:tools="http://schemas.android.com/tools">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
     <!-- Разрешения для сети и звонков -->
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
-    
-    <!-- Разрешения для работы в фоне (Foreground Service) -->
+
+    <!-- КРИТИЧЕСКИ ВАЖНО для работы в фоне (Foreground Service) -->
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_PHONE_CALL" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MICROPHONE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
     
-    <!-- Не даем телефону уснуть -->
+    <!-- Чтобы телефон не засыпал и не блокировал звонок -->
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.DISABLE_KEYGUARD" />
-    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
     <application
         android:allowBackup="true"
@@ -26,8 +24,7 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.ProfiCrm"
-        android:usesCleartextTraffic="true"> <!-- Разрешает http, если нужно -->
+        android:theme="@style/Theme.ProfiCrm">
 
         <activity
             android:name=".MainActivity"
@@ -41,13 +38,20 @@
             </intent-filter>
         </activity>
 
-        <!-- НАШ СЕРВИС ДЛЯ ЗВОНКОВ -->
+        <!-- СЕРВИС ДЛЯ SIP-ЗВОНКОВ (Тип phoneCall|microphone обязателен) -->
         <service
             android:name=".LinphoneService"
             android:enabled="true"
             android:exported="false"
             android:stopWithTask="false"
             android:foregroundServiceType="phoneCall|microphone" />
+
+        <!-- Вспомогательный сервис (если используется) -->
+        <service
+            android:name=".ForegroundService"
+            android:enabled="true"
+            android:exported="false"
+            android:foregroundServiceType="phoneCall" />
 
     </application>
 </manifest>
