@@ -9,10 +9,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
-import android.hardware.Sensor
-import android.hardware.SensorEvent
-import android.hardware.SensorEventListener
-import android.hardware.SensorManager
 import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.os.Build
@@ -20,7 +16,7 @@ import android.os.Bundle
 import android.os.Message
 import android.os.PowerManager
 import android.view.ViewGroup
-import android.view.WindowManager
+import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.PermissionRequest
 import android.webkit.WebChromeClient
@@ -33,15 +29,12 @@ import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 
-class MainActivity : AppCompatActivity(), SensorEventListener {
+class MainActivity : AppCompatActivity() {
 
     private lateinit var webView: WebView
     private lateinit var audioManager: AudioManager
-    private lateinit var sensorManager: SensorManager
-    private var proximitySensor: Sensor? = null
     private var orderDialog: Dialog? = null
-    private var isProximityEnabled = false
-    private var originalBrightness = -1f
+    private var proximityWakeLock: PowerManager.WakeLock? = null
 
     companion object {
         var instance: MainActivity? = null
@@ -57,8 +50,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
 
         audioManager = getSystemService(Context.AUDIO_SERVICE) as AudioManager
-        sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        proximitySensor = sensorManager.getDefaultSensor(Sensor.TYPE_PROXIMITY)
+
+        val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
+        proximityWakeLock = powerManager.newWakeLock(
+            PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK,
+            "ProfiCrm::ProximitySensor"
+        )
 
         if (hasAudioPermission()) {
             startMyService()
@@ -89,6 +86,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         webView.webViewClient = WebViewClient()
 
         webView.webChromeClient = object : WebChromeClient() {
+            // Логирование JS в logcat
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                android.util.Log.d("ProfiCrmWebView", "${consoleMessage.message()} (${consoleMessage.lineNumber()})")
+                return true
+            }
+
             override fun onPermissionRequest(request: PermissionRequest) {
                 request.grant(request.resources)
             }
@@ -205,9 +208,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     val devices = audioManager.availableCommunicationDevices
                     val targetType = if (enabled) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
                     val targetDevice = devices.firstOrNull { it.type == targetType }
-                    if (targetDevice != null) {
-                        audioManager.setCommunicationDevice(targetDevice)
-                    }
+                    if (targetDevice != null) audioManager.setCommunicationDevice(targetDevice)
                 } else {
                     @Suppress("DEPRECATION")
                     audioManager.isSpeakerphoneOn = enabled
@@ -215,9 +216,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
                 audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, maxVolume, 0)
                 println("🔊 Громкая связь: $enabled")
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
 
         @JavascriptInterface
@@ -229,16 +228,12 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                     val devices = audioManager.availableCommunicationDevices
                     val targetType = if (enableSpeaker) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE
                     val targetDevice = devices.firstOrNull { it.type == targetType }
-                    if (targetDevice != null) {
-                        audioManager.setCommunicationDevice(targetDevice)
-                    }
+                    if (targetDevice != null) audioManager.setCommunicationDevice(targetDevice)
                 } else {
                     @Suppress("DEPRECATION")
                     audioManager.isSpeakerphoneOn = enableSpeaker
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
 
         @JavascriptInterface
@@ -247,41 +242,27 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
                 val max = audioManager.getStreamMaxVolume(AudioManager.STREAM_VOICE_CALL)
                 val target = (max * volumePercent / 100).coerceIn(0, max)
                 audioManager.setStreamVolume(AudioManager.STREAM_VOICE_CALL, target, 0)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
 
         @JavascriptInterface
         fun enableProximitySensor() {
             try {
-                if (!isProximityEnabled && proximitySensor != null) {
-                    sensorManager.registerListener(this@MainActivity, proximitySensor, SensorManager.SENSOR_DELAY_NORMAL)
-                    isProximityEnabled = true
+                if (proximityWakeLock?.isHeld == false) {
+                    proximityWakeLock?.acquire(60 * 60 * 1000L)
                     println("📡 Датчик приближения ВКЛЮЧЕН")
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
 
         @JavascriptInterface
         fun disableProximitySensor() {
             try {
-                if (isProximityEnabled) {
-                    sensorManager.unregisterListener(this@MainActivity)
-                    isProximityEnabled = false
-                    // Восстанавливаем яркость, если экран был погашен
-                    val window = this@MainActivity.window
-                    val params = window.attributes
-                    params.screenBrightness = originalBrightness
-                    window.attributes = params
-                    window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
+                if (proximityWakeLock?.isHeld == true) {
+                    proximityWakeLock?.release()
                     println("📡 Датчик приближения ВЫКЛЮЧЕН")
                 }
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
 
         @JavascriptInterface
@@ -327,9 +308,7 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
 
                 val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
                 manager.notify(1001, notification)
-            } catch (e: Exception) {
-                e.printStackTrace()
-            }
+            } catch (e: Exception) { e.printStackTrace() }
         }
 
         @JavascriptInterface
@@ -338,40 +317,11 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
         }
     }
 
-    override fun onSensorChanged(event: SensorEvent?) {
-        if (event?.sensor?.type == Sensor.TYPE_PROXIMITY && isProximityEnabled) {
-            val distance = event.values[0]
-            val window = window
-            val params = window.attributes
-
-            if (distance < proximitySensor?.maximumRange ?: 0f) {
-                // Объект близко (ухо) — гасим экран и блокируем касания
-                if (originalBrightness == -1f) {
-                    originalBrightness = params.screenBrightness
-                }
-                params.screenBrightness = 0f
-                window.attributes = params
-                window.addFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
-            } else {
-                // Объект далеко — восстанавливаем яркость
-                params.screenBrightness = originalBrightness
-                window.attributes = params
-                window.clearFlags(WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE)
-            }
-        }
-    }
-
-    override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
-        // Не используется
-    }
-
     private fun cancelCallNotification() {
         try {
             val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
             manager.cancel(1001)
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) { e.printStackTrace() }
     }
 
     private fun hasAudioPermission(): Boolean {
@@ -401,16 +351,25 @@ class MainActivity : AppCompatActivity(), SensorEventListener {
             } else {
                 startService(serviceIntent)
             }
-        } catch (e: Exception) {
-            e.printStackTrace()
-        }
+        } catch (e: Exception) { e.printStackTrace() }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        webView.onResume()
+        webView.resumeTimers()
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Не ставим WebView на паузу, чтобы не рвать WebSocket
     }
 
     override fun onDestroy() {
         super.onDestroy()
         instance = null
         orderDialog?.dismiss()
-        sensorManager.unregisterListener(this)
+        proximityWakeLock?.release()
         webView.destroy()
     }
 }
