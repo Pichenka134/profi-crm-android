@@ -25,7 +25,6 @@ class ForegroundService : Service() {
             createNotificationChannel()
             startForeground(1, buildNotification())
 
-            // Держим процессор активным
             val powerManager = getSystemService(Context.POWER_SERVICE) as PowerManager
             wakeLock = powerManager.newWakeLock(
                 PowerManager.PARTIAL_WAKE_LOCK,
@@ -33,7 +32,6 @@ class ForegroundService : Service() {
             )
             wakeLock?.acquire()
 
-            // Держим Wi-Fi активным
             val wifiManager = applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager
             wifiLock = wifiManager.createWifiLock(
                 WifiManager.WIFI_MODE_FULL_HIGH_PERF,
