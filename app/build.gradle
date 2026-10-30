@@ -6,7 +6,7 @@ plugins {
 android {
     namespace 'com.proficrm.app'
     compileSdk 34
-    // Пробуем NDK r27c, который рекомендуется для Linphone 5.4+
+    // Linphone 5.4.0 требует NDK 27
     ndkVersion "27.0.12077973"
 
     defaultConfig {
@@ -58,6 +58,6 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'androidx.webkit:webkit:1.8.0'
 
-    // Явно указываем конкретную версию вместо 5.4.+
+    // Используем точную версию
     implementation 'org.linphone.bundled:linphone-sdk-android:5.4.0'
 }
