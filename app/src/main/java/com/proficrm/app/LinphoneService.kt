@@ -63,30 +63,28 @@ class LinphoneService : Service() {
             c.isIpv6Enabled = false
             
             // Создаём AuthInfo
-            val authInfo = Factory.instance().createAuthInfo(login, null, password, null, null, server)
+            val authInfo = factory.createAuthInfo(login, null, password, null, null, server)
             
-            // Создаём ProxyConfig
-            val proxyConfig = c.createProxyConfig()
+            // Создаём AccountParams (новый API вместо ProxyConfig)
+            val params = c.createAccountParams()
             
             // 1. Настраиваем identity (кто мы)
-            val identity = Factory.instance().createAddress("sip:$login@$server")
-            proxyConfig.identityAddress = identity
+            val identity = factory.createAddress("sip:$login@$server")
+            params.identityAddress = identity
             
-            // 2. Настраиваем сервер и транспорт через Address
-            val serverAddress = Factory.instance().createAddress("sip:$server")
-            serverAddress?.transport = TransportType.Tcp // Транспорт задаётся у адреса сервера
-            proxyConfig.serverAddr = serverAddress?.asStringUriOnly()
+            // 2. Настраиваем сервер и транспорт
+            val serverAddress = factory.createAddress("sip:$server")
+            serverAddress.transport = TransportType.Tcp
+            params.serverAddress = serverAddress
             
-            // 3. Включаем регистрацию (исправлено: enableRegister вместо registerEnabled)
-            proxyConfig.enableRegister(true)
+            // 3. Включаем регистрацию (актуальное свойство)
+            params.registerEnabled = true
             
-            // 4. Финализируем настройки
-            proxyConfig.done()
-            
-            // 5. Добавляем в Core
+            // 4. Создаём аккаунт и добавляем его в Core
+            val account = c.createAccount(params)
             c.addAuthInfo(authInfo)
-            c.addProxyConfig(proxyConfig)
-            c.defaultProxyConfig = proxyConfig
+            c.addAccount(account)
+            c.defaultAccount = account
 
             c.addListener(object : CoreListenerStub() {
                 override fun onCallStateChanged(core: Core, call: Call, state: Call.State?, message: String) {
