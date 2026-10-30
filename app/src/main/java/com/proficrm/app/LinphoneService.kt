@@ -27,17 +27,45 @@ class LinphoneService : Service() {
     private lateinit var core: Core
     private lateinit var coreListener: CoreListenerStub
 
+    private var currentLogin: String? = null
+    private var currentPassword: String? = null
+    private var currentServer: String? = null
+
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "Сервис создан")
-
         createNotificationChannel()
         startForeground(2, buildNotification())
-
-        initLinphone()
     }
 
-    private fun initLinphone() {
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        val login = intent?.getStringExtra("sip_login")
+        val password = intent?.getStringExtra("sip_password")
+        val server = intent?.getStringExtra("sip_server") ?: "sipproxy.telphin.ru"
+
+        Log.d(TAG, "Получены SIP-данные: login=$login, server=$server")
+
+        if (login.isNullOrEmpty() || password.isNullOrEmpty()) {
+            Log.w(TAG, "⚠️ SIP-данные не переданы, Linphone не запускается")
+            return START_STICKY
+        }
+
+        // Если учётные данные изменились — перезапускаем Linphone
+        if (login != currentLogin || password != currentPassword || server != currentServer) {
+            Log.d(TAG, "Учётные данные изменились, перезапуск Linphone")
+            stopLinphone()
+            initLinphone(login, password, server)
+            currentLogin = login
+            currentPassword = password
+            currentServer = server
+        } else {
+            Log.d(TAG, "Учётные данные не изменились, Linphone уже работает")
+        }
+
+        return START_STICKY
+    }
+
+    private fun initLinphone(login: String, password: String, server: String) {
         try {
             val factory = Factory.instance()
             val coreConfig = factory.createConfigWithFactory(
@@ -72,16 +100,11 @@ class LinphoneService : Service() {
                             MainActivity.instance?.onNativeIncomingCall(callerNumber)
                         }
                         Call.State.Connected -> {
-                            Log.d(TAG, "Звонок принят")
                             MainActivity.instance?.onNativeCallActive()
                         }
                         Call.State.End, Call.State.Error -> {
-                            Log.d(TAG, "Звонок завершён")
                             cancelIncomingCallNotification()
                             MainActivity.instance?.onNativeCallEnded()
-                        }
-                        Call.State.OutgoingRinging -> {
-                            Log.d(TAG, "Исходящий звонок — гудки")
                         }
                         else -> {}
                     }
@@ -90,19 +113,13 @@ class LinphoneService : Service() {
 
             core.addListener(coreListener)
 
-            // TODO: брать из профиля пользователя
-            val username = "17530*101"
-            val password = "ТвойSIPПароль"
-            val domain = "sipproxy.telphin.ru"
-            val port = 5068
-
-            val authInfo: AuthInfo = factory.createAuthInfo(username, null, password, null, null, domain, null)
+            val authInfo: AuthInfo = factory.createAuthInfo(login, null, password, null, null, server, null)
             core.addAuthInfo(authInfo)
 
-            val identityAddress = factory.createAddress("sip:$username@$domain")
-            val serverAddress = factory.createAddress("sip:$domain")
+            val identityAddress = factory.createAddress("sip:$login@$server")
+            val serverAddress = factory.createAddress("sip:$server")
             serverAddress.transport = TransportType.Udp
-            serverAddress.port = port
+            serverAddress.port = 5068
 
             val params = core.createAccountParams()
             params.identityAddress = identityAddress
@@ -115,9 +132,21 @@ class LinphoneService : Service() {
             core.defaultAccount = account
 
             core.start()
-            Log.d(TAG, "Linphone Core запущен")
+            Log.d(TAG, "Linphone Core запущен для $login")
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка инициализации Linphone", e)
+        }
+    }
+
+    private fun stopLinphone() {
+        try {
+            if (::core.isInitialized) {
+                core.removeListener(coreListener)
+                core.stop()
+                Log.d(TAG, "Linphone остановлен")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Ошибка при остановке Linphone", e)
         }
     }
 
@@ -149,20 +178,11 @@ class LinphoneService : Service() {
         manager.cancel(1002)
     }
 
-    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        return START_STICKY
-    }
-
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
         super.onDestroy()
-        try {
-            core.removeListener(coreListener)
-            core.stop()
-        } catch (e: Exception) {
-            Log.e(TAG, "Ошибка при остановке Linphone", e)
-        }
+        stopLinphone()
         Log.d(TAG, "Сервис уничтожен")
     }
 
