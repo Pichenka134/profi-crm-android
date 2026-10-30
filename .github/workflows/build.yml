@@ -21,7 +21,6 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v4
         with:
-          # Явно указываем пакеты, чтобы не запрашивался удалённый "tools"
           packages: 'platform-tools'
           ndk-version: 25.2.9519653
 
@@ -42,6 +41,12 @@ jobs:
 
       - name: Build with Gradle
         run: ./gradlew assembleDebug --stacktrace
+
+      - name: Print error if failed
+        if: failure()
+        run: |
+          echo "=== ПОСЛЕДНЯЯ ОШИБКА ==="
+          ./gradlew assembleDebug 2>&1 | grep -A 10 "What went wrong" || true
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
