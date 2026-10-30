@@ -10,7 +10,6 @@ import android.os.PowerManager
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import org.linphone.core.*
-import org.linphone.core.tools.Log as LinphoneLog
 
 class LinphoneService : Service() {
 
@@ -55,8 +54,6 @@ class LinphoneService : Service() {
         
         val factory = Factory.instance()
         factory.setDebugMode(true, "Linphone")
-        
-        // ИСПРАВЛЕНО: setStoragePath больше не используется в новых SDK
         factory.setCacheDir(filesDir.absolutePath)
         factory.setDataDir(filesDir.absolutePath)
 
@@ -65,19 +62,28 @@ class LinphoneService : Service() {
             c.transports.tcpPort = 5060
             c.isIpv6Enabled = false
             
+            // Создаём AuthInfo
             val authInfo = Factory.instance().createAuthInfo(login, null, password, null, null, server)
-            val params = c.createProxyConfig()
-            params.identityAddress = Factory.instance().createAddress("sip:$login@$server")
-            params.serverAddr = "sip:$server"
             
-            // ИСПРАВЛЕНО: Правильная установка типа транспорта и регистрации
-            params.transport = TransportType.Tcp 
-            params.enableRegister(true)
-            params.done()
+            // Создаём ProxyConfig
+            val proxyConfig = c.createProxyConfig()
             
-            c.addProxyConfig(params)
-            c.defaultProxyConfig = params
+            // 1. Настраиваем identity (кто мы)
+            val identity = Factory.instance().createAddress("sip:$login@$server")
+            proxyConfig.identityAddress = identity
+            
+            // 2. Настраиваем сервер и транспорт через Address
+            val serverAddress = Factory.instance().createAddress("sip:$server")
+            serverAddress?.transport = TransportType.Tcp // Устанавливаем TCP через Address
+            proxyConfig.serverAddr = serverAddress?.asStringUriOnly()
+            
+            // 3. Включаем регистрацию
+            proxyConfig.enableRegister(true)
+            
+            // 4. Добавляем в Core
             c.addAuthInfo(authInfo)
+            c.addProxyConfig(proxyConfig)
+            c.defaultProxyConfig = proxyConfig
 
             c.addListener(object : CoreListenerStub() {
                 override fun onCallStateChanged(core: Core, call: Call, state: Call.State?, message: String) {
